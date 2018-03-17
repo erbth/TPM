@@ -1,3 +1,3 @@
 .PHONY: tpm.native
 tpm.native:
-	ocamlbuild $@
+	ocamlbuild -pkg xml-light -pkg unix $@
