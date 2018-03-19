@@ -1,7 +1,49 @@
 open Arg
 open Util
+open Pkg
 open Unpacked_package
+open Packed_package
+open Repository_search
+open Configuration
+open Installation
 
+let select_version_to_install =
+    List.fold_left
+        (fun a rp -> match a with None -> Some rp | Some a ->
+            if pkg_newer (snd rp) (snd a) then Some rp else Some a)
+        None
+
+let install_packages names =
+    print_target ();
+    match read_configuration () with
+        | None -> false
+        | Some cfg ->
+    let rps =
+        List.fold_left
+            (fun a name -> match a with None -> None | Some a ->
+                let rps =
+                    find_package_in_all_repos name |>
+                    List.filter (fun rp ->
+                        let (_,p) = rp
+                        in p.Pkg.a = Some cfg.Configuration.a)
+                in
+                match select_version_to_install rps with
+                    | None -> print_endline ("Package \"" ^ name ^
+                        "\" not found for architecture " ^ (string_of_arch cfg.a));
+                        None
+                    | Some rp -> Some (rp::a))
+            (Some [])
+            names
+    in
+    match rps with None -> false | Some rps ->
+    List.fold_left
+        (fun s (r,p) -> if s
+            then install_or_upgrade_package r p Status.Manual
+            else false)
+        true
+        rps
+
+(* User interface *)
 let version_msg =
     let (major,minor,revision) = Tpm_config.version
     in
@@ -11,6 +53,10 @@ let version_msg =
         (string_of_int revision))
 
 let usage_msg = version_msg
+
+(* Read environment variables *)
+let read_env_vars () =
+    try target_system := Unix.getenv "TPM_TARGET" with _ -> ()
 
 (* Commands *)
 let create_desc_type = ref None
@@ -43,6 +89,9 @@ let cmd_remove_rdeps () = remove_rdeps := Some ()
 let pack = ref None
 let cmd_pack () = pack := Some ()
 
+let install = ref None
+let cmd_install () = install := Some ()
+
 let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
     ("--target", Set_string target_system, "Root of the managed system's filesystem");
@@ -57,12 +106,15 @@ let cmd_specs = [
     ("--add-files", Unit cmd_add_files, "Add files in destdir");
     ("--add-rdependency", String cmd_add_rdependency, "Add a runtime dependency");
     ("--remove-rdependencies", Unit cmd_remove_rdeps, "Remove all runtime dependencies");
-    ("--pack", Unit cmd_pack, "Create the packed/transport form of the package")
+    ("--pack", Unit cmd_pack, "Create the packed/transport form of the package");
+    ("--install", Unit cmd_install, "Install or update the specified packages; " ^
+        "<name> is a regular expression in the format used by OCaml's Str module.")
 ]
 
+let anon_args = ref []
 let cmd_anon a =
-    print_endline ("Invalid option \"" ^ a ^ "\"");
-    exit 2
+    if !install = Some () then anon_args := a::!anon_args
+    else(print_endline ("Invalid option \"" ^ a ^ "\""); exit 2)
 
 let check_cmdline () =
     let args = [
@@ -75,7 +127,8 @@ let check_cmdline () =
         PolyUnitOption !add_files;
         PolyStringOption !add_rdependency;
         PolyUnitOption !remove_rdeps;
-        PolyUnitOption !pack
+        PolyUnitOption !pack;
+        PolyUnitOption !install
     ]
     in
     match
@@ -94,6 +147,7 @@ let check_cmdline () =
 
 
 let main () =
+    read_env_vars ();
     parse cmd_specs cmd_anon usage_msg;
     check_cmdline ();
     match !set_name with
@@ -116,6 +170,10 @@ let main () =
         Some () -> if remove_runtime_dependencies () then exit 0 else exit 1
     | None -> match !pack with
         Some () -> if create_packed_form () then exit 0 else exit 1
+    | None -> match !install with
+        Some () -> if !anon_args = []
+            then (print_endline "--install requires an argument"; exit 2)
+            else if install_packages !anon_args then exit 0 else exit 1
     | None ->
         print_endline "Something went wrong (you should not see this): no command specified (!?)"
 

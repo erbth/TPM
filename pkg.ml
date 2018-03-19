@@ -31,6 +31,10 @@ let empty_pkg = {
     rdeps = []
 }
 
+let string_of_pkg p = match p.n with
+    | Some n -> n
+    | _ -> "???"
+
 let xml_of_pkg (p:pkg) =
     let xes = []
     in
@@ -167,3 +171,24 @@ let write_package pkg = match xml_of_pkg pkg with
                 ("Could not write to file \"" ^
                 Tpm_config.desc_file_name ^ "\".");
             false)
+
+let pkg_newer p1 p2 = match (p1.v, p2.v) with
+    | (Some v1, Some v2) -> version_bigger v1 v2
+    | _ -> false
+
+(* These functions are here to avoid a circular dependency between Packed_package
+ * and Repository *)
+let pkg_name_of_packed_name n =
+    match String.rindex_opt n '-' with
+        | None ->
+            print_endline ("Packed: Invalid package name: \"" ^ n ^ "\"");
+            None
+        | Some i -> Some (String.sub n 0 i)
+
+let packed_name_of_pkg pkg =
+    match (pkg.n, pkg.v, pkg.a) with
+        | (Some n, Some v, Some a) -> Some (
+            n ^ "-" ^
+            (string_of_version v) ^ "_" ^
+            (string_of_arch a) ^ ".tpm.tar")
+        | _ -> None

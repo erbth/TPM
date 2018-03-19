@@ -12,7 +12,11 @@ let create_package t =
         | Some t ->
             let s =
                 try
+                    let pu = Unix.umask 0o000
+                    in
                     Unix.mkdir Tpm_config.destdir_name 0o755;
+                    let _ = Unix.umask pu
+                    in
                     Unix.chown Tpm_config.destdir_name 0 0; true
                 with
                     | Unix.Unix_error (c,_,_) -> print_endline
@@ -128,9 +132,13 @@ let add_files_from_destdir () =
                         let fs = List.rev fs
                         in
                         let cfs = List.filter
-                            (fun f -> let (_,n) = f in contains
-                                Tpm_config.conf_path_prefixes
-                                (String.sub n 0 3))
+                            (fun f ->
+                                let (_,n) = f
+                                in
+                                List.exists
+                                    (fun r -> Str.string_match r n 0)
+                                    Tpm_config.conf_path_prefixes
+                            )
                             fs
                         in
                         let ncfs = sorted_difference compare_names fs cfs
@@ -140,7 +148,7 @@ let add_runtime_dependency d =
     match read_package () with
         | None -> false
         | Some pkg ->
-            let rdeps = List.merge compare_names pkg.rdeps [d]
+            let rdeps = sorted_unique_insert compare_names pkg.rdeps d
             in
                 write_package {pkg with rdeps = rdeps}
 
