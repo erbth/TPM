@@ -1,0 +1,216 @@
+% !TeX spellcheck = en_US
+\documentclass[a4paper]{article}
+\usepackage[left=2cm, right=2cm, top=2cm, bottom=2cm]{geometry}
+\usepackage{lmodern}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{dirtree}
+
+\newcommand{\file}[1]{\texttt{#1}}
+\newcommand{\program}[1]{\textbf{#1}}
+\newcommand{\variable}[1]{'\texttt{#1}'}
+
+\newcommand{\green}[1]{\textcolor{green}{#1}}
+
+\title{TSClient LEGACY Package Manager}
+\author{Thomas Erbesdobler <t.erbesdobler@gmx.de>}
+
+\begin{document}
+	\maketitle
+	\tableofcontents
+	
+	\section{Packages}
+	\label{sec:packages}
+	
+	A package can take three different ''shapes'': unpacked (during development), packed (also transport shape) and installed (unpacked without meta data). The meta data od a package is stored in a central database located at \file{/var/lib/tpm/status.xml} during installation.Hence, the meta data is not required to be part of the installed shape. It would furthermore be redundant.
+	
+	\subsection{Description of the three shapes}
+	\label{sec:description_of_the_three_shapes}
+	
+	\paragraph{unpacked:}
+	The unpacked shape is the following directory structure:
+	\begin{description}
+		\item[\file{\dots/desc.xml}] Describes the package by its type, name, version, computer architecture, runtime- and compiletime dependencies, and files. Two different types of packages exist, one for packaging software and one for bundling and deploying config files, like \file{/etc/inittab}. A file may be a config file, which is only installed if the package is newly installed (not upgraded) and it is not already present, or a non-config file. The software shall be responsible to upgrade previous config files during an upgrade of the package. This can be done using a postupgrade script. For an explanation have a look below.
+		
+		\file{desc.xml} can be created and modified using \program{tpm}, the single tool of TPM.
+		
+		\item[\file{\dots/destdir/\dots}] The packages directory structure, which is a tree rooted at \file{/}. Therefore, this is copied to \file{/} of the target system when the package is installed. However config files are treated specially, see above.
+		
+		The name 'destdir' originates in the Make variable \variable{DESTDIR} that can be used to install software that is built with GNU Autotools to a different directory.
+	\end{description}
+
+	\paragraph{packed/transport:}
+	An uncompressed tar archive of the following structure:
+	\begin{description}
+		\item[\file{desc.xml}] '\file{desc.xml}'
+		
+		\item[\file{destdir.tar.gz}] Gzipped tar archive of \file{destdir}. I choose Gzip because with Pigz a fully compatible parallel implementation exists.
+	\end{description}
+	The name of the archive must be <package name>-<version>\_<architecture>.tpm.tar. Ther version and architecture strings must follow the same scheme as those in \file{desc.xml} described later.
+	
+	\paragraph{installed:}
+	During installation \program{tpm} tests if any non-config file in destdir is present in the runtime system's directory structure. 'runtime system' refers to the target system to which the package is installed. If this is not the case, it extracts the content of \file{destdir.tar.gx} to the runtime system's root directory. Otherwise \program{tpm} signals an error and does not modify the runtime system's state. If the package is newely installed and features config files, \program{tpm} installs all non present ones. Before any modification is made, \program{tpm} inserts the package into its database (also referred to as 'status') and flags it as 'installation in progress'. Finally, this label is removed and the entry possibly updated to contain all files which are currently installed for the package. This procedure makes modifications atomic.
+	
+	\subsection{Package types}
+	\label{sec:package_types}
+	
+	To types of package exist: 'sw' (abbreviation of 'software', regular packages which contain executables, libraries etc.) and 'conf' (bundle system config files, i.e. those located in \file{/etc}). Packages of type conf differ in how config files are handled. If installed newly, an error will be signalled and not action be performed if any config file is already predent. During upgrading the same thing happens, however if the file was installed by a former version of the package and not modified since then, \program{tpm} replaces it.
+	
+	\section{User interface}
+	\label{sec:user_interface}
+	
+	TPM features only one tool, which contains the entire functionality: \program{tpm}.
+	
+	\subsection{Package management commands}
+	\label{sec:package_management_commands}
+	
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\green{\texttt{-{}-install <name1>, \dots}} & Install or upgrade the specified packages \\
+		
+		\texttt{-{}-policy <name>} & Show the installed and available versions of name \\
+		
+		\texttt{-{}-mark-atuo <name1>, \dots} & Mark the specified packages as automatically installed \\
+		
+		\texttt{-{}-mark-manual <name1>, \dots} & Mark the specified packages as manually installed \\
+		
+		\texttt{-{}-remove <name>} & Remove a package ans its config files if they were not modified \\
+		
+		\texttt{-{}-auto-remove} & Remove all packages that were marked as automatically installed but are not required by other packages that are marked as manually installed \\
+		
+		\texttt{-{}-list} & List all installed packages \\
+		
+		\texttt{-{}-show-problems} & Show all problems with the corrent state (i.e. halfly installed packages after an interruption or missing dependencies) \\
+		
+		\texttt{-{}-recover} & Recover from a dirty state (always possible due to atomic write operations to status) \\
+		
+		\texttt{-{}-upgrade} & Upgrade all upgradeable packages \\
+		
+		\texttt{-{}-install-from-file <name.tpm.tar>} & Install or upgrade from a \texttt{.tpm.tar} file \\
+	\end{tabularx}
+	\egroup
+
+	\vspace{1em}
+	Any of these commands may be combined with the following options: \\
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\texttt{-{}-target} & Root of the system which is managed; This can be specified with the environment variable \variable{TPM\_TARGET}, however \texttt{-{}-target} precedes. \\
+	\end{tabularx}
+	\egroup
+	
+	\subsection{Creating packages}
+	\label{sec:creating_packages}
+	
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\green{\texttt{-{}-create-desc <type>}} & Create \file{desc.xml} with package type and \file{destdir} in the current working directory \\
+		
+		\green{\texttt{-{}-set-name <name>}} & Set the package's name \\
+		
+		\green{\texttt{-{}-set-version <X>}} & Set the package's version to X \\
+		
+		\green{\texttt{-{}-set-arch <Y>}} & Set the package's architecture to Y \\
+		
+		\green{\texttt{-{}-add-files}} & Add files from destdir \\
+		
+		\texttt{-{}-guess-rdependencies} & Guess the package's runtime dependencies from destdir; This does not remove dependencies. However, this does not make sense without a solid package base that includes all used libraries. \\
+		
+		\green{\texttt{-{}-add-rdependency ,<name>}} & Add the runtime dependency <name> \\
+		
+		\green{\texttt{-{}-remove-rdependencies}} & Remove all runtime dependencies \\
+		
+		\green{\texttt{-{}-show-missing}} & List information that is missing in the package description \\
+		
+		\green{\texttt{-{}-pack}} & Generate packed shape in \texttt{.tpm.tar}
+	\end{tabularx}
+	\egroup
+
+	\subsection{Other command line parameters}
+	\label{sec:other_command_line_parameters}
+	
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\green{\texttt{-{}-version}} & Print \program{tpm}'s version \\
+		\green{\texttt{-{}-help}} & Print a help text
+	\end{tabularx}
+	\egroup
+	
+	\subsection{Environment variables}
+	\label{sec:environment_variables}
+	
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\variable{TPM\_TARGET} & Specifies the runtime system's root directory; May be overwritten by \texttt{-{}-target} \\
+	\end{tabularx}
+	\egroup
+	
+	\section{File formats}
+	\label{sec:file_formats}
+	
+	\subsection{\file{desc.xml}}
+	\label{sec:desc.xml}
+	
+	\dirtree{.1 <sw file\_version=''1.0''> | <conf file\_version=''1.0''>.
+		.2 <name>.
+		.2 <version> \DTcomment{\{x.y.z\} with integer values x, y, z}.
+		.2 <arch> \DTcomment{\{i386 | amd64\}}.
+		.2 <file> \DTcomment{non-config file}.
+		.2 <cfile sha512sum= > \DTcomment{config file}.
+		.2 <rdep> \DTcomment{runtime dependency (package name)}.
+	}
+
+	\vspace{1em}
+	The file, cfile and rdep elements must be sorted ascending by their values according to OCaml's built in string comparison (uppercase letters are 'smaller' than lowercase letters)
+	
+	\subsection{\file{status.xml}}
+	\label{sec:status.xml}
+	
+	This file is located in the \file{/var/lib/tpm} directory.
+	
+	\noindent
+	\dirtree{.1 <status file\_version=''1.0''>.
+		.2 <tupel> .
+		.3 <sw \dots> | <config \dots> \DTcomment{package element equal to one in \file{desc.xml}; The file\_version attribute must match the file\_version of status.}.
+		.3 <reason> \DTcomment{\{auto | manua \}}.
+		.3 <status> \DTcomment{\{installation | installed | removal | removed\}}.
+	}
+
+	\subsection{\file{config.xml}}
+	\label{sec:config.xml}
+	
+	This file is located in the \file{/etc/tpm} directory.
+	
+	\noindent
+	\dirtree{.1 <tpm file\_version=''1.0''>.
+		.2 <repo type= \{dir\}> \DTcomment{path to Directory Repository}.
+		.2 <arch> \DTcomment{\{i386 | amd64\}}.
+	}
+
+	\section{Repository formats}
+	\label{sec:repository_formats}
+	
+	\subsection{Directory Repository}
+	\label{sec:directory_repository}
+	
+	Directory Repositories are directory trees of the following format:
+	
+	\vspace{1em}	
+	\noindent
+	\begin{tabular}{rl}
+		\file{\dots/} & \file{<arch>/<package-X1\_Y1.tpm.tar} \\
+		& \hspace{0.5cm} $\vdots$ \\
+		& \file{<arch>/<package-Xn\_Yn.tpm.tar} \\
+	\end{tabular}
+
+	\section{Caching}
+	\label{sec:caching}
+	
+	No local caching is done. If scratchspace is needed (e.g. to unpack the transport form of a package, \file{/tmp/tpm} is used. This temporary directory is created in \file{/tmp} of the tools system, not within the runtime system's root file system.
+\end{document}

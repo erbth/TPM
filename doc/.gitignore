@@ -1,0 +1,7 @@
+# pdflatex build artifacts
+*.synctex.gz
+*.toc
+*.out
+*.pdf
+*.aux
+*.log
