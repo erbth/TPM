@@ -183,19 +183,20 @@ let write_status s =
                     "Status: Could not write to \"" ^ sp ^ "\"");
                     false
 
-let rec get_package_status_opt status name version arch  =
-    match status with
-        | [] -> None
-        | (pkg, r, s) :: sts ->
-            if  pkg.n = Some name &&
-                pkg.v = Some version &&
-                pkg.a = Some arch
-            then Some (pkg, r, s)
-            else get_package_status_opt sts name version arch
-
 let compare_tupels (p1,_,_) (p2,_,_) = match (p1.n, p2.n) with
         | (Some n1, Some n2) -> compare_names n1 n2
         | _ -> failwith "Status: Uncomparable tupel"
+
+let rec select_status_tupel_by_name status name =
+    match status with
+        | [] -> None
+        | dt :: sts ->
+            if  compare_tupels dt (
+                    {empty_pkg with n = Some name},
+                    (),
+                    ()) = 0
+            then Some dt
+            else select_status_tupel_by_name sts name
 
 let unique_insert_status_tupel status tupel =
     sorted_unique_insert compare_tupels status tupel

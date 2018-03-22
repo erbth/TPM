@@ -69,47 +69,38 @@ let set_package_architecture a =
                 | Some pkg -> write_package {pkg with a = Some a}
 
 let add_files_from_destdir () =
-    let process_file n p =
-        try
-            let cmd = Tpm_config.program_sha512sum ^ " " ^ n
-            in
-            let ic = Unix.open_process_in cmd
-            in
-            let sha512sum = input_line ic
-            in
-            if Unix.close_process_in ic <> Unix.WEXITED 0
-            then
-                (print_endline (cmd ^ " failed."); None)
-            else
-                let sha512sum = String.split_on_char ' ' sha512sum |> List.hd
-                in
-                    Some (sha512sum, p)
-        with
-            | Unix.Unix_error (c,_,_) ->
-                print_endline ("Calculating the sha512 sum of file \"" ^
-                    n ^ "\" failed: " ^ Unix.error_message c ^ "."); None
-            | _ -> print_endline ("Calculating the sha512 sum of file \"" ^
-                    n ^ "\" failed."); None
+    let process_file fs cfs n p =
+        if List.exists
+            (fun r -> Str.string_match r p 0)
+            Tpm_config.conf_path_prefixes
+        then
+            match sha512sum_of_file_opt n with
+                | None -> print_endline
+                    ("Unpacked: Calculating the sha512sum of file \"" ^
+                    n ^ "\" failed"); None
+                | Some sha512sum -> Some (fs, (sha512sum, p)::cfs)
+        else
+            Some (p::fs,cfs)
     in
-    let rec process_dir fs d p =
+    let rec process_dir fs cfs ds d p =
         try
             let c = Sys.readdir d |> Array.to_list |> List.sort compare_names
             in
                 (List.fold_left (fun a f ->
-                        match a with None -> None | Some a ->
+                        match a with None -> None | Some (fs,cfs,ds) ->
                         let p = p ^ "/" ^ f
                         in
                         let f = d ^ "/" ^ f
                         in
                         if Sys.is_directory f
                         then
-                            process_dir a f p
+                            process_dir fs cfs (p::ds) f p
                         else
-                            match process_file f p with
+                            match process_file fs cfs f p with
                                 | None -> None
-                                | Some f -> Some (f :: a)
+                                | Some (fs,cfs) -> Some (fs,cfs,ds)
                         )
-                    (Some fs)
+                    (Some (fs,cfs,ds))
                     c)
         with
             | Sys_error m ->
@@ -126,23 +117,16 @@ let add_files_from_destdir () =
             then (print_endline ("\"" ^ Tpm_config.destdir_name ^ "\" is not a directory.");
                 false)
             else
-                match process_dir [] Tpm_config.destdir_name "" with
+                match process_dir [] [] [] Tpm_config.destdir_name "" with
                     | None -> false
-                    | Some fs ->
+                    | Some (fs, cfs, ds) ->
                         let fs = List.rev fs
                         in
-                        let cfs = List.filter
-                            (fun f ->
-                                let (_,n) = f
-                                in
-                                List.exists
-                                    (fun r -> Str.string_match r n 0)
-                                    Tpm_config.conf_path_prefixes
-                            )
-                            fs
+                        let cfs = List.rev cfs
                         in
-                        let ncfs = sorted_difference compare_names fs cfs
-                        in write_package {pkg with files = ncfs; cfiles = cfs}
+                        let ds = List.rev ds
+                        in
+                        write_package {pkg with files = fs; cfiles = cfs; dirs = ds}
 
 let add_runtime_dependency d =
     match read_package () with
@@ -160,12 +144,12 @@ let remove_runtime_dependencies () =
 let create_packed_form () =
     let pack archivename =
         let pack_destdir_cmd =
-            Tpm_config.program_cd ^ " " ^ Tpm_config.destdir_name ^ " && " ^
-            Tpm_config.program_tar ^ " -cpI " ^  Tpm_config.program_gzip ^
+            !program_cd ^ " " ^ Tpm_config.destdir_name ^ " && " ^
+            !program_tar ^ " -cpI " ^  !program_gzip ^
             " -f ../" ^ Tpm_config.destdir_name ^ ".tar.gz *"
         in
         let pack_package_cmd =
-            Tpm_config.program_tar ^ " -cf " ^ archivename ^ " " ^
+            !program_tar ^ " -cf " ^ archivename ^ " " ^
             Tpm_config.desc_file_name ^ " " ^ Tpm_config.destdir_name ^ ".tar.gz"
         in
         try

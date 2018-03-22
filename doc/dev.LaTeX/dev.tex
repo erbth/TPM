@@ -32,7 +32,7 @@
 	\paragraph{unpacked:}
 	The unpacked shape is the following directory structure:
 	\begin{description}
-		\item[\file{\dots/desc.xml}] Describes the package by its type, name, version, computer architecture, runtime- and compiletime dependencies, and files. Two different types of packages exist, one for packaging software and one for bundling and deploying config files, like \file{/etc/inittab}. A file may be a config file, which is only installed if the package is newly installed (not upgraded) and it is not already present, or a non-config file. The software shall be responsible to upgrade previous config files during an upgrade of the package. This can be done using a postupgrade script. For an explanation have a look below.
+		\item[\file{\dots/desc.xml}] Describes the package by its type, name, version, computer architecture, runtime- and compiletime dependencies, and files. Two different types of packages exist, one for packaging software and one for bundling and deploying config files, like \file{/etc/inittab}. A file may be a config file, which is only installed if the package is newly installed (not upgraded) and it is not already present, or a non-config file or a directory. Directories are special in that they will only be removed during removal of the package if they are not empty. The software shall be responsible to upgrade previous config files during an upgrade of the package. This can be done using a postupgrade script. For an explanation have a look below.
 		
 		\file{desc.xml} can be created and modified using \program{tpm}, the single tool of TPM.
 		
@@ -71,19 +71,19 @@
 	\begin{tabularx}{\textwidth}{lX}
 		\green{\texttt{-{}-install <name1>, \dots}} & Install or upgrade the specified packages \\
 		
-		\texttt{-{}-policy <name>} & Show the installed and available versions of name \\
+		\green{\texttt{-{}-policy <name>}} & Show the installed and available versions of <name> \\
 		
-		\texttt{-{}-mark-atuo <name1>, \dots} & Mark the specified packages as automatically installed \\
+		\texttt{-{}-mark-auto <name1>, \dots} & Mark the specified packages as automatically installed \\
 		
 		\texttt{-{}-mark-manual <name1>, \dots} & Mark the specified packages as manually installed \\
 		
-		\texttt{-{}-remove <name>} & Remove a package ans its config files if they were not modified \\
+		\green{\texttt{-{}-remove <name1>, \dots}} & Remove the specified packages and their config files if they were not modified \\
 		
 		\texttt{-{}-auto-remove} & Remove all packages that were marked as automatically installed but are not required by other packages that are marked as manually installed \\
 		
-		\texttt{-{}-list} & List all installed packages \\
+		\green{\texttt{-{}-list-installed}} & List all installed packages \\
 		
-		\texttt{-{}-show-problems} & Show all problems with the corrent state (i.e. halfly installed packages after an interruption or missing dependencies) \\
+		\green{\texttt{-{}-show-problems}} & Show all problems with the current installation (i.e. halfly installed packages after an interruption or missing dependencies) \\
 		
 		\texttt{-{}-recover} & Recover from a dirty state (always possible due to atomic write operations to status) \\
 		
@@ -101,6 +101,16 @@
 		\texttt{-{}-target} & Root of the system which is managed; This can be specified with the environment variable \variable{TPM\_TARGET}, however \texttt{-{}-target} precedes. \\
 	\end{tabularx}
 	\egroup
+	
+	\subsubsection{Details on \texttt{-{}-show-problems}}
+	
+	\texttt{-{}-show-problems} detects and lists the following types of problems:
+	
+	\noindent
+	\begin{itemize}
+		\item Packages in a dirty state, which is any state except 'installed'
+		\item Packages that are installed multiple times
+	\end{itemize}
 	
 	\subsection{Creating packages}
 	\label{sec:creating_packages}
@@ -148,6 +158,14 @@
 	\def\arraystretch{1.5}
 	\begin{tabularx}{\textwidth}{lX}
 		\variable{TPM\_TARGET} & Specifies the runtime system's root directory; May be overwritten by \texttt{-{}-target} \\
+		
+		\variable{TPM\_PROGRAM\_SHA512SUM} & The \program{sha512sum} compatible program to use for generating the hash sums of files \\
+		
+		\variable{TPM\_PROGRAM\_TAR} & The Tar compatible archiver to use for packing/unpacking the packages \\
+		
+		\variable{TPM\_PROGRAM\_CD} & The \program{cd} compatible program to use for changing the current working directory \\
+		
+		\variable{TPM\_PROGRAM\_GZIP} & The Gzip compatible compression program to use for compressing packages \\
 	\end{tabularx}
 	\egroup
 	
@@ -163,11 +181,12 @@
 		.2 <arch> \DTcomment{\{i386 | amd64\}}.
 		.2 <file> \DTcomment{non-config file}.
 		.2 <cfile sha512sum= > \DTcomment{config file}.
+		.2 <dir> \DTcomment{directory}.
 		.2 <rdep> \DTcomment{runtime dependency (package name)}.
 	}
 
 	\vspace{1em}
-	The file, cfile and rdep elements must be sorted ascending by their values according to OCaml's built in string comparison (uppercase letters are 'smaller' than lowercase letters)
+	The file, cfile, dir and rdep elements must be sorted ascending by their values according to OCaml's built in string comparison (uppercase letters are 'smaller' than lowercase letters)
 	
 	\subsection{\file{status.xml}}
 	\label{sec:status.xml}
@@ -213,4 +232,19 @@
 	\label{sec:caching}
 	
 	No local caching is done. If scratchspace is needed (e.g. to unpack the transport form of a package, \file{/tmp/tpm} is used. This temporary directory is created in \file{/tmp} of the tools system, not within the runtime system's root file system.
+	
+	\section{Escaping of file names}
+	\label{sec:escaping_of_file_names}
+	
+	Currently, file names are not escaped before they are included into XML files. This can lead to problems including code injection if file names include XML syntax elements. However I do not like nor encourage the concept of escaping in files that are processed by machines but rather use binary files. But I don't have the time for that.
+	
+	\section{Installed packages on a system}
+	\label{sec:installed_packages_on_a_system}
+	
+	Within a system, the package name must be unique. That is, a package may only be installed once. This implies that at each point in time, only one architectural instance in exactly one version of a package can be installed.
+	
+	\section{About command line output}
+	\label{sec:about_command_line_output}
+	
+	I try to print enough information to understand possible problems and from were they originate. Additionally I try to create good looking output. However I do not have the time to format the output well in any case, thus I try to achieve a good looking format during normal operation and accept an ugly one in case of problems.
 \end{document}

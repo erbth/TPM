@@ -3,15 +3,11 @@ open Util
 open Pkg
 open Unpacked_package
 open Packed_package
+open Installed_package
 open Repository_search
 open Configuration
 open Installation
-
-let select_version_to_install =
-    List.fold_left
-        (fun a rp -> match a with None -> Some rp | Some a ->
-            if pkg_newer (snd rp) (snd a) then Some rp else Some a)
-        None
+open Status
 
 let install_packages names =
     print_target ();
@@ -36,12 +32,42 @@ let install_packages names =
             names
     in
     match rps with None -> false | Some rps ->
-    List.fold_left
-        (fun s (r,p) -> if s
-            then install_or_upgrade_package r p Status.Manual
-            else false)
-        true
-        rps
+    match read_status () with None -> false | Some status ->
+    if check_installation status false|> not then false
+    else
+    let status =
+        List.fold_left
+            (fun s (r,p) -> match s with None -> None | Some s ->
+                install_or_upgrade_package s r p Status.Manual)
+            (Some status)
+            rps
+    in
+    match status with None -> false | Some _ -> true
+
+let remove_packages names =
+    print_target();
+    match read_status () with None -> false | Some status ->
+    let names =
+        List.fold_left
+            (fun ns n ->
+                match select_status_tupel_by_name status n with
+                    | None -> print_endline
+                        ("Package " ^ n ^ " is not installed");
+                        ns
+                    | Some _ -> n::ns)
+            []
+            (List.rev names)
+    in
+    if check_installation status false |> not then false
+    else
+    let status =
+        List.fold_left
+            (fun s name -> match s with None -> None | Some s ->
+                remove_package s name)
+            (Some status)
+            (List.rev names)
+    in
+    match status with None -> false | Some _ -> true
 
 (* User interface *)
 let version_msg =
@@ -56,7 +82,11 @@ let usage_msg = version_msg
 
 (* Read environment variables *)
 let read_env_vars () =
-    try target_system := Unix.getenv "TPM_TARGET" with _ -> ()
+    try target_system := Unix.getenv "TPM_TARGET" with _ -> ();
+    try program_sha512sum := Unix.getenv "TPM_PROGRAM_SHA512SUM" with _ -> ();
+    try program_tar := Unix.getenv "TPM_PROGRAM_TAR" with _ -> ();
+    try program_cd := Unix.getenv "TPM_PROGRAM_CD" with _ -> ();
+    try program_gzip := Unix.getenv "TPM_PROGRAM_GZIP" with _ -> ()
 
 (* Commands *)
 let create_desc_type = ref None
@@ -92,6 +122,18 @@ let cmd_pack () = pack := Some ()
 let install = ref None
 let cmd_install () = install := Some ()
 
+let policy = ref None
+let cmd_policy n = policy := Some n
+
+let remove = ref None
+let cmd_remove () = remove := Some ()
+
+let list_installed = ref None
+let cmd_list_installed () = list_installed := Some ()
+
+let show_problems = ref None
+let cmd_show_problems () = show_problems := Some ()
+
 let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
     ("--target", Set_string target_system, "Root of the managed system's filesystem");
@@ -107,13 +149,20 @@ let cmd_specs = [
     ("--add-rdependency", String cmd_add_rdependency, "Add a runtime dependency");
     ("--remove-rdependencies", Unit cmd_remove_rdeps, "Remove all runtime dependencies");
     ("--pack", Unit cmd_pack, "Create the packed/transport form of the package");
-    ("--install", Unit cmd_install, "Install or update the specified packages; " ^
-        "<name> is a regular expression in the format used by OCaml's Str module.")
+    ("--install", Unit cmd_install, "Install or uprade the specified packages");
+    ("--policy", String cmd_policy, "Show the installed and available versions of name");
+    ("--remove", Unit cmd_remove, "Remove the specified packages and their " ^
+        "config files if they were not modified");
+    ("--list-installed", Unit cmd_list_installed, "List all installed packages");
+    ("--show-problems", Unit cmd_show_problems, "Show all problems with the current " ^
+        "installation (i.e. halfly installed packages after an interruption or " ^
+        "missing dependencies)")
 ]
 
 let anon_args = ref []
 let cmd_anon a =
-    if !install = Some () then anon_args := a::!anon_args
+    if !install = Some () || !remove = Some ()
+    then anon_args := a::!anon_args
     else(print_endline ("Invalid option \"" ^ a ^ "\""); exit 2)
 
 let check_cmdline () =
@@ -128,7 +177,11 @@ let check_cmdline () =
         PolyStringOption !add_rdependency;
         PolyUnitOption !remove_rdeps;
         PolyUnitOption !pack;
-        PolyUnitOption !install
+        PolyUnitOption !install;
+        PolyStringOption !policy;
+        PolyUnitOption !remove;
+        PolyUnitOption !list_installed;
+        PolyUnitOption !show_problems
     ]
     in
     match
@@ -174,6 +227,16 @@ let main () =
         Some () -> if !anon_args = []
             then (print_endline "--install requires an argument"; exit 2)
             else if install_packages !anon_args then exit 0 else exit 1
+    | None -> match !policy with
+        | Some n -> if show_policy n then exit 0 else exit 1
+    | None -> match !remove with
+        Some () -> if !anon_args = []
+            then (print_endline "--remove requires an argument"; exit 2)
+            else if remove_packages !anon_args then exit 0 else exit 1
+    | None -> match !list_installed with
+        | Some () -> if list_installed_packages () then exit 0 else exit 1
+    | None -> match !show_problems with
+        | Some () -> if show_problems_with_installation () then exit 0 else exit 1
     | None ->
         print_endline "Something went wrong (you should not see this): no command specified (!?)"
 

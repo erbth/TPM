@@ -16,8 +16,9 @@ type pkg = {
     n:string option;                  (* package name *)
     v:version option;                 (* version *)
     a:arch option;                    (* architecture *)
-    files:(string * string) list;     (* sha512sum * path *)
+    files:string list;                (* path *)
     cfiles:(string * string) list;    (* sha512sum * path *)
+    dirs: string list;                (* path *)
     rdeps:string list;
 }
 
@@ -28,9 +29,11 @@ let empty_pkg = {
     a = None;
     files = [];
     cfiles = [];
+    dirs = [];
     rdeps = []
 }
 
+(* Generates a string that uniquely identifies the package *)
 let string_of_pkg p = match p.n with
     | Some n -> n
     | _ -> "???"
@@ -44,12 +47,17 @@ let xml_of_pkg (p:pkg) =
         (List.rev p.rdeps)
     in
     let xes = List.fold_left
+        (fun a n -> Element ("dir", [], [PCData n]) :: a)
+        xes
+        (List.rev p.dirs)
+    in
+    let xes = List.fold_left
         (fun a (s,n) -> Element ("cfile", [("sha512sum", s)],[ PCData n]) :: a)
         xes
        ( List.rev p.cfiles)
     in
     let xes = List.fold_left
-        (fun a (s,n) -> Element ("file", [("sha512sum", s)],[ PCData n]) :: a)
+        (fun a n -> Element ("file", [],[ PCData n]) :: a)
         xes
         (List.rev p.files)
     in
@@ -89,13 +97,8 @@ let pkg_of_xml x =
         )
         | _ -> (print_endline "Invalid architecture"; None)
     in
-    let process_file pkg attrs = function
-        | [PCData f] -> (
-            try Some {pkg with files =
-                pkg.files @
-                [(List.assoc "sha512sum" attrs, f)]}
-            with _ -> (print_endline ("File \"" ^ f ^ "\" has no sha512 sum."); None)
-        )
+    let process_file pkg = function
+        | [PCData f] -> Some {pkg with files = pkg.files @ [f]}
         | _ -> (print_endline "Invalid file"; None)
     in
     let process_cfile pkg attrs = function
@@ -107,6 +110,10 @@ let pkg_of_xml x =
         )
         | _ -> (print_endline "Invalid config file"; None)
     in
+    let process_dir pkg = function
+        | [PCData d] -> Some {pkg with dirs = pkg.dirs @ [d]}
+        | _ -> (print_endline "Invalid directory"; None)
+    in
     let process_rdep pkg = function
         | [PCData d] -> Some {pkg with rdeps = pkg.rdeps @ [d]}
         | _ -> (print_endline "Invalid runtime dependency"; None)
@@ -117,8 +124,9 @@ let pkg_of_xml x =
             | "name" -> process_name pkg cs
             | "version" -> process_version pkg cs
             | "arch" -> process_arch pkg cs
-            | "file" -> process_file pkg attrs cs
+            | "file" -> process_file pkg cs
             | "cfile" -> process_cfile pkg attrs cs
+            | "dir" -> process_dir pkg cs
             | "rdep" -> process_rdep pkg cs
             | _ -> (print_endline ("Invalid xml tag: \"" ^ t ^ "\""); None)
         )

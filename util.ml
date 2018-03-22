@@ -1,7 +1,11 @@
 let target_system = ref Tpm_config.default_target_system
+let program_sha512sum = ref Tpm_config.default_program_sha512sum
+let program_tar = ref Tpm_config.default_program_tar
+let program_cd = ref Tpm_config.default_program_cd
+let program_gzip = ref Tpm_config.default_program_gzip
 
 let print_target () =
-    print_endline ("Target system is at \"" ^ !target_system ^ "\"" ^
+    print_endline ("Runtime system is at \"" ^ !target_system ^ "\"" ^
         if !target_system <> Tpm_config.default_target_system
         then " (not the default)" else "")
 
@@ -118,3 +122,38 @@ let print_failed () =
 
 let print_ok () =
     print_endline (" [  " ^ Terminal.green ^ "OK" ^ Terminal.normal ^ "  ]")
+
+let sha512sum_of_file_opt name =
+    try
+        let cmd = !program_sha512sum ^ " '" ^ name ^ "'"
+        in
+        let ic = Unix.open_process_in cmd
+        in
+        let sha512sum = input_line ic
+        in
+        if Unix.close_process_in ic <> Unix.WEXITED 0
+        then
+            (print_endline (cmd ^ " failed."); None)
+        else
+            let sha512sum = String.split_on_char ' ' sha512sum |> List.hd
+            in
+                Some sha512sum
+    with
+        | Unix.Unix_error (c,_,_) ->
+            print_endline ("Calculating the sha512 sum of file \"" ^
+                name ^ "\" failed: " ^ Unix.error_message c ^ "."); None
+        | _ -> print_endline ("Calculating the sha512 sum of file \"" ^
+                name ^ "\" failed."); None
+
+let array_is_empty a = (Array.length a = 0)
+
+type file_status = Other_file | Directory | Non_existent | Read_error
+
+let file_status n =
+        try
+            if (Unix.lstat n).st_kind = Unix.S_DIR
+            then Directory
+            else Other_file
+        with
+            | Unix.Unix_error (ENOENT,_,_) -> Non_existent
+            | _ -> Read_error
