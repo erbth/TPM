@@ -117,6 +117,23 @@ let mkdir_p_at_target dir perm =
     in
     work !target_system dirs
 
+let rec rmdir_r dir =
+    try
+        Sys.readdir dir |> Array.to_list
+        |> List.iter
+            (fun de ->
+                let de = dir ^ "/" ^ de
+                in
+                if Sys.is_directory de
+                then (if rmdir_r de then () else failwith "")
+                else Sys.remove de);
+        Unix.rmdir dir;
+        true
+    with
+        | Sys_error msg -> print_endline msg; false
+        | Unix.Unix_error (c,_,_) -> Unix.error_message c |> print_endline; false
+        | _ -> false
+
 let print_failed () =
     print_endline (" [" ^ Terminal.red ^ "failed" ^ Terminal.normal ^ "]")
 
@@ -157,3 +174,5 @@ let file_status n =
         with
             | Unix.Unix_error (ENOENT,_,_) -> Non_existent
             | _ -> Read_error
+
+let bool_of_option o = match o with None -> false | Some _ -> true

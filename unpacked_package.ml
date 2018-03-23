@@ -150,7 +150,17 @@ let create_packed_form () =
         in
         let pack_package_cmd =
             !program_tar ^ " -cf " ^ archivename ^ " " ^
-            Tpm_config.desc_file_name ^ " " ^ Tpm_config.destdir_name ^ ".tar.gz"
+            Tpm_config.desc_file_name ^ " " ^
+            Tpm_config.destdir_name ^ ".tar.gz" ^
+            (if Sys.file_exists Tpm_config.postinstsh_name
+                then " " ^ Tpm_config.postinstsh_name
+                else "") ^
+            (if Sys.file_exists Tpm_config.prermsh_name
+                then " " ^ Tpm_config.prermsh_name
+                else "") ^
+            (if Sys.file_exists Tpm_config.preupdatesh_name
+                then " " ^ Tpm_config.preupdatesh_name
+                else "")
         in
         try
             if Sys.command pack_destdir_cmd <> 0

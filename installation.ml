@@ -8,6 +8,10 @@ open Installed_package
 open Configuration
 
 let install_package status repo pkg reason =
+    match pkg.n with
+        | None -> print_endline "Installation: package has no name"; None
+        | Some name ->
+
     print_endline ("Installing \"" ^ (string_of_pkg pkg) ^ "\"=" ^
         (match pkg.v with None -> "?" | Some v -> string_of_version v) ^
         " from " ^ (string_of_repository repo));
@@ -18,6 +22,49 @@ let install_package status repo pkg reason =
     if write_status status |> not then (print_failed (); None)
     else
     (print_ok ();
+
+    let package_info_location =
+        form_target_path (Tpm_config.package_info_location ^ "/" ^ name)
+    in
+
+    let tmp_dir status =
+        match status with None -> None | Some status ->
+        print_string "    Creating a temporary directory";
+        if create_tmp_dir ()
+        then (print_ok (); Some status)
+        else (print_failed (); None)
+    in
+
+    let gain_access status =
+        match status with None -> (None, "") | Some status ->
+        print_string "    Gaining access to the package";
+        match provide_transport_shape repo pkg with
+            | None -> print_failed (); (None, "")
+            | Some path -> print_ok (); (Some status, path)
+    in
+
+    let (status, transport_path) =
+        Some status
+        |> tmp_dir
+        |> gain_access
+    in
+    match status with None -> None | Some status ->
+
+    let create_pkg_info_location status =
+        match status with None -> None | Some status ->
+        print_string "    Creating the package info location";
+        try
+            mkdir_p_at_target
+                (Tpm_config.package_info_location ^ "/" ^ name)
+                0o755;
+            print_ok ();
+            Some status
+        with
+            | Unix.Unix_error (c,_,_) -> print_newline (); print_string
+                ("    " ^ Unix.error_message c); print_failed (); None
+            | _ -> print_failed (); None
+    in
+    match create_pkg_info_location (Some status) with None -> None | Some status ->
 
     print_string "    Determining wich config files must be excluded";
     let files_to_exclude =
@@ -47,21 +94,107 @@ let install_package status repo pkg reason =
     
     print_string "    installing files";
     if install_files repo pkg files_to_exclude |> not
-    then
-        (print_failed ();
-        print_string "    Removing the change from status";
-        let status = delete_status_tupel status (pkg, (), ())
-        in
-        if write_status status then (print_ok (); None)
-        else (print_failed (); None))
+    then (print_failed (); None)
     else
     (print_ok ();
-    
-    print_string "    Acknowledging the change in status";
-    let status = update_status_tupel status (pkg, reason, Installed)
+
+    print_string "    Looking for a postinst script";
+    let unpack_postinst_cmd =
+        !program_tar ^ " -xf " ^ transport_path ^ " -C " ^
+        Tpm_config.tmp_dir ^ " " ^ Tpm_config.postinstsh_name ^ " 2>&1"
     in
-    if write_status status then (print_ok (); Some status)
-    else (print_failed (); None)
+    let hp =
+        try
+            let ic = Unix.open_process_in unpack_postinst_cmd
+            in
+            Some (Unix.close_process_in ic = Unix.WEXITED 0)
+        with
+            | Unix.Unix_error (c,_,_) -> print_newline(); print_string
+                ("    testing for a postinst script failed: " ^
+                (Unix.error_message c)); None
+            | _ -> print_newline (); print_string
+                ("    testing for a postinst script failed"); None
+    in
+    match hp with None -> print_failed (); None | Some hp ->
+    print_ok ();
+    let s =
+        (if hp
+        then
+            (print_string "    Executing the postinst script";
+            if
+                try
+                    let postinstsh =
+                        Tpm_config.tmp_dir ^ "/" ^ Tpm_config.postinstsh_name
+                    in
+                    Unix.chmod postinstsh 0o755;
+                    Sys.command postinstsh = 0
+                with
+                    | Unix.Unix_error (c,_,_) -> print_newline (); print_string
+                        ("    " ^ Unix.error_message c); false
+                    | Sys_error msg -> print_newline (); print_string
+                        ("    " ^ msg); false
+                    | _ -> false
+            then (print_ok (); true)
+            else (print_failed (); false))
+        else
+            (print_endline "    This package has no postinst script"; true))
+    in
+    if not s then None
+    else
+    (
+
+    let copy_prermsh status =
+        match status with None -> None | Some status ->
+        print_string "    Copying files to the package info location";
+        let unpack_cmd =
+            !program_tar ^ " -xf " ^ transport_path ^
+            " -C " ^ Tpm_config.tmp_dir ^ " " ^ Tpm_config.prermsh_name ^
+            " > /dev/zero 2>&1"
+        in
+        let compress_cmd =
+            !program_gzip ^ " " ^
+            Tpm_config.tmp_dir ^ "/" ^ Tpm_config.prermsh_name ^
+            " -c  > " ^
+            package_info_location ^ "/" ^ Tpm_config.prermsh_name ^ ".gz"
+        in
+        try
+            if Sys.command unpack_cmd <> 0
+            then
+                (print_ok (); Some status)
+            else
+                let pu = Unix.umask 0o022
+                in
+                let status =
+                    if Sys.command compress_cmd <> 0
+                    then
+                        (print_newline (); print_string "    Gzip failed";
+                        print_failed (); None)
+                    else Some status
+                in
+                let _ = Unix.umask pu
+                in
+                print_ok (); status
+        with
+            | Sys_error msg -> print_newline (); print_string ("    " ^ msg);
+                print_failed (); None
+            | Unix.Unix_error (c,_,_) -> print_newline (); print_string
+                ("    " ^ Unix.error_message c); print_failed (); None
+            | _ -> print_failed (); None
+    in
+    let acknowledge_change status =
+        match status with None -> None | Some status ->
+        print_string "    Acknowledging the change in status";
+        let status = update_status_tupel status (pkg, reason, Installed)
+        in
+        if write_status status
+        then (print_ok (); Some status)
+        else (print_failed (); None)
+    in
+
+    Some status
+    |> copy_prermsh
+    |> acknowledge_change
+    )
     )
     )
 
@@ -87,6 +220,10 @@ let remove_package status name =
             "\" is not installed"); None
         | Some (pkg, preason, pstate) ->
     print_endline ("Removing package \"" ^ name ^ "\":");
+
+    let pkg_info_location =
+        form_target_path (Tpm_config.package_info_location ^ "/" ^ name)
+    in
 
     print_string "    Determining wich files must be removed";
     let rmfiles = pkg.files
@@ -122,7 +259,51 @@ let remove_package status name =
     else
     (print_ok ();
 
-    print_string "    Removing files";
+    print_string "    Looking for a prerm script";
+    let prermsh_tmp_path =
+        Tpm_config.tmp_dir ^ "/" ^ Tpm_config.prermsh_name
+    in
+    let prermshgz_path =
+        pkg_info_location ^ "/" ^ Tpm_config.prermsh_name ^ ".gz"
+    in
+    let s =
+        match file_status prermshgz_path with
+            | Read_error -> print_newline (); print_string
+                ("    can not read \"" ^ prermshgz_path ^ "\"");
+                print_failed (); false
+            | Directory -> print_newline (); print_string
+                ("    \"" ^ prermshgz_path ^ "\"is a directory");
+                print_failed (); false
+            | Non_existent -> print_ok (); print_endline
+                "    This package has no prerm script"; true
+            | Other_file ->
+                print_ok ();
+                print_string "    Executing the prerm script";
+                match create_tmp_dir () with false -> false | true ->
+                let unzip_prermsh_cmd =
+                    !program_gzip ^ " -cd " ^ prermshgz_path ^ " > " ^
+                    prermsh_tmp_path
+                in
+                try
+                    if Sys.command unzip_prermsh_cmd = 0
+                    then
+                        (Unix.chmod prermsh_tmp_path 0o755;
+                        if Sys.command prermsh_tmp_path = 0
+                        then (print_ok (); true)
+                        else (print_failed (); false))
+                    else
+                        (print_newline (); print_string
+                        "    unzipping the prerm script failed";
+                        print_failed (); false)
+                with
+                    | Unix.Unix_error (c,_,_) -> print_newline (); print_string
+                        ("    " ^ Unix.error_message c); print_failed (); false
+                    | Sys_error msg -> print_newline (); print_string
+                        ("    " ^ msg); print_failed (); false
+                    | _ -> print_failed (); false
+    in
+    match s with false -> None | true ->
+
     let remove_file n =
         try
             Sys.remove n;
@@ -130,7 +311,7 @@ let remove_package status name =
         with
             | Sys_error msg -> print_newline ();
                 print_string ("    failed to remove \"" ^
-                n ^ "\" :" ^ msg); false
+                n ^ "\": " ^ msg); false
             | _ -> print_newline ();
                 print_string ("    failed to remove \"" ^ n ^
                 "\""); false
@@ -146,6 +327,8 @@ let remove_package status name =
             | _ -> print_newline (); print_string
                 ("    failed to remove directory \"" ^ n ^ "\""); false
     in
+
+    print_string "    Removing files";
     let s =
         List.fold_left
             (fun s fn ->
@@ -175,13 +358,20 @@ let remove_package status name =
                 in
                 match file_status dn with
                     | Directory ->
-                        if Sys.readdir dn |> array_is_empty
-                        then
-                            remove_directory dn && s
-                        else
-                            (print_newline ();
-                            print_string ("    \"" ^ dn ^
-                                "\" is not empty hence not removing it"); s)
+                        (try
+                            if Sys.readdir dn |> array_is_empty
+                            then
+                                remove_directory dn && s
+                            else
+                                (print_newline ();
+                                print_string ("    \"" ^ dn ^
+                                    "\" is not empty hence not removing it"); s)
+                        with
+                            | Sys_error msg -> print_newline ();
+                                print_string msg; false
+                            | _ -> print_newline ();
+                                print_endline ("    can not read from \"" ^ dn ^
+                                    "\""); false)
                     | Other_file -> print_newline (); print_string
                         ("    \"" ^ dn ^ "\" is not a directory"); false
                     | Non_existent -> print_newline (); print_string
@@ -198,11 +388,24 @@ let remove_package status name =
     else
     (print_ok ();
 
-    print_string "    Removing package from status";
-    let status = delete_status_tupel status (pkg, preason, Removal)
+    let remove_pkg_info_location status =
+        match status with None -> None | Some status ->
+        print_string "    Removing the package info location";
+        if rmdir_r pkg_info_location
+        then (print_ok (); Some status)
+        else (print_failed (); None)
     in
-    if write_status status |> not then (print_failed (); None)
-    else (print_ok (); Some status)
+    let remove_from_status status =
+        match status with None -> None | Some status ->
+        print_string "    Removing package from status";
+        let status = delete_status_tupel status (pkg, preason, Removal)
+        in
+        if write_status status |> not then (print_failed (); None)
+        else (print_ok (); Some status)
+    in
+    Some status
+    |> remove_pkg_info_location
+    |> remove_from_status
     )
     )
     )

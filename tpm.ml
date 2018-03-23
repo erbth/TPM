@@ -33,7 +33,7 @@ let install_packages names =
     in
     match rps with None -> false | Some rps ->
     match read_status () with None -> false | Some status ->
-    if check_installation status false|> not then false
+    if check_installation status true|> not then false
     else
     let status =
         List.fold_left
@@ -58,7 +58,7 @@ let remove_packages names =
             []
             (List.rev names)
     in
-    if check_installation status false |> not then false
+    if check_installation status true |> not then false
     else
     let status =
         List.fold_left
@@ -68,6 +68,23 @@ let remove_packages names =
             (List.rev names)
     in
     match status with None -> false | Some _ -> true
+
+let recover_by_removing () =
+    print_target ();
+    match read_status () with None -> false | Some status ->
+    let forcefully_remove_packages status pkgs =
+        List.fold_left
+            (fun status pkg -> match status with None -> None | Some status ->
+                match pkg.n with
+                    | None -> print_endline "Package with no name, aborting";
+                        None
+                    | Some n -> force_remove status n)
+            (Some status)
+            pkgs
+    in
+    get_dirty_packages status false
+    |> forcefully_remove_packages status
+    |> bool_of_option
 
 (* User interface *)
 let version_msg =
@@ -134,6 +151,9 @@ let cmd_list_installed () = list_installed := Some ()
 let show_problems = ref None
 let cmd_show_problems () = show_problems := Some ()
 
+let recover = ref None
+let cmd_recover () = recover := Some ()
+
 let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
     ("--target", Set_string target_system, "Root of the managed system's filesystem");
@@ -156,7 +176,10 @@ let cmd_specs = [
     ("--list-installed", Unit cmd_list_installed, "List all installed packages");
     ("--show-problems", Unit cmd_show_problems, "Show all problems with the current " ^
         "installation (i.e. halfly installed packages after an interruption or " ^
-        "missing dependencies)")
+        "missing dependencies)");
+    ("--recover", Unit cmd_recover, "Recover from a dirty state by deleting all " ^
+        "packages that are in a dirty state (always possible due to atomic " ^
+        "write operations to status")
 ]
 
 let anon_args = ref []
@@ -181,7 +204,8 @@ let check_cmdline () =
         PolyStringOption !policy;
         PolyUnitOption !remove;
         PolyUnitOption !list_installed;
-        PolyUnitOption !show_problems
+        PolyUnitOption !show_problems;
+        PolyUnitOption !recover
     ]
     in
     match
@@ -237,6 +261,8 @@ let main () =
         | Some () -> if list_installed_packages () then exit 0 else exit 1
     | None -> match !show_problems with
         | Some () -> if show_problems_with_installation () then exit 0 else exit 1
+    | None -> match !recover with
+        | Some () -> if recover_by_removing () then exit 0 else exit 1
     | None ->
         print_endline "Something went wrong (you should not see this): no command specified (!?)"
 

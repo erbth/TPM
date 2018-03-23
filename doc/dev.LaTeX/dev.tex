@@ -21,6 +21,11 @@
 	\maketitle
 	\tableofcontents
 	
+	\section{Introduction}
+	\label{sec:introduction}
+	
+	This manual should be read in a linear manner. You must expect that each line depends on the previous text.
+	
 	\section{Packages}
 	\label{sec:packages}
 	
@@ -39,6 +44,12 @@
 		\item[\file{\dots/destdir/\dots}] The packages directory structure, which is a tree rooted at \file{/}. Therefore, this is copied to \file{/} of the target system when the package is installed. However config files are treated specially, see above.
 		
 		The name 'destdir' originates in the Make variable \variable{DESTDIR} that can be used to install software that is built with GNU Autotools to a different directory.
+		
+		\item[\file{postinst.sh}] This script will be executed after the package's files are installed. Its semantic must be independent of the working directory it is executed in. The root of the target system is passed as the environment variable \variable{TPM\_TARGET}. The same is required for the other two scripts.
+		
+		\item[\file{prerm.sh}] This script will be executed before the package's files are removed. Any file that was generated in \file{postinst.sh} must be removed in this script. Since a package can be removed without a repository that hosts it, this script is compressed and copied to \file{/var/lib/tpm/<package-name>/postinst.sh.gz} during installation. When the package is removed forcefully, this script is executed as well. Therefore, it must respect this situation, in which not all of its files might have been installed.
+		
+		\item[\file{preupdate.sh}] This script will be executed before any files of the packages old version are removed or any new ones are installed. It must guaranty that no files except config files that differ from those shipped with the package stay back when the package is removed.
 	\end{description}
 
 	\paragraph{packed/transport:}
@@ -47,7 +58,15 @@
 		\item[\file{desc.xml}] '\file{desc.xml}'
 		
 		\item[\file{destdir.tar.gz}] Gzipped tar archive of \file{destdir}. I choose Gzip because with Pigz a fully compatible parallel implementation exists.
+		
+		\item[\file{postinst.sh}] '\file{postinst.sh}'
+		
+		\item[\file{prerm.sh}] '\file{prerm.sh}'
+		
+		\item[\file{preupdate.sh}] '\file{preupdate.sh}'
 	\end{description}
+	
+	\noindent
 	The name of the archive must be <package name>-<version>\_<architecture>.tpm.tar. Ther version and architecture strings must follow the same scheme as those in \file{desc.xml} described later.
 	
 	\paragraph{installed:}
@@ -85,7 +104,7 @@
 		
 		\green{\texttt{-{}-show-problems}} & Show all problems with the current installation (i.e. halfly installed packages after an interruption or missing dependencies) \\
 		
-		\texttt{-{}-recover} & Recover from a dirty state (always possible due to atomic write operations to status) \\
+		\green{\texttt{-{}-recover}} & Recover from a dirty state by deleting all packages that are in a dirty state (always possible due to atomic write operations to status) \\
 		
 		\texttt{-{}-upgrade} & Upgrade all upgradeable packages \\
 		
@@ -247,4 +266,9 @@
 	\label{sec:about_command_line_output}
 	
 	I try to print enough information to understand possible problems and from were they originate. Additionally I try to create good looking output. However I do not have the time to format the output well in any case, thus I try to achieve a good looking format during normal operation and accept an ugly one in case of problems.
+	
+	\section{The package info location}
+	\label{sec:the_package_info_location}
+	
+	For each package a directory with its name is created in \file{/var/lib/tpm} during installation. \file{/var/lib/tpm} is called package info location and the specific package's sub directory is called this package's package info location. Information which is better stored in a file than a database shall be located there (i.e. \file{postrm.sh}).
 \end{document}
