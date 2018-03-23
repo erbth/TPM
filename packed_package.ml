@@ -20,7 +20,7 @@ let read_package path =
             ("Packed: Could not read the package: " ^ msg); None
         | _ -> print_endline ("Packed: Could not read the package"); None
 
-let install_files repo pkg exclude_files =
+let unpack_files repo pkg exclude_files =
     if not (create_tmp_dir ()) then false
     else
     match provide_transport_shape repo pkg with None -> false | Some path ->

@@ -37,7 +37,7 @@
 	\paragraph{unpacked:}
 	The unpacked shape is the following directory structure:
 	\begin{description}
-		\item[\file{\dots/desc.xml}] Describes the package by its type, name, version, computer architecture, runtime- and compiletime dependencies, and files. Two different types of packages exist, one for packaging software and one for bundling and deploying config files, like \file{/etc/inittab}. A file may be a config file, which is only installed if the package is newly installed (not upgraded) and it is not already present, or a non-config file or a directory. Directories are special in that they will only be removed during removal of the package if they are not empty. The software shall be responsible to upgrade previous config files during an upgrade of the package. This can be done using a postupgrade script. For an explanation have a look below.
+		\item[\file{\dots/desc.xml}] Describes the package by its type, name, version, computer architecture, runtime- and compiletime dependencies, and files. Two different types of packages exist, one for packaging software and one for bundling and deploying config files, like \file{/etc/inittab}. A file may be a config file, which is only installed if the package is newly installed (not upgraded) and it is not already present, or a non-config file or a directory. Directories are special in that they will only be removed during removal of the package if they are not empty. The software shall be responsible to upgrade previous config files during an upgrade of the package. This can be done using a preupgrade script. For an explanation have a look below.
 		
 		\file{desc.xml} can be created and modified using \program{tpm}, the single tool of TPM.
 		
@@ -75,7 +75,7 @@
 	\subsection{Package types}
 	\label{sec:package_types}
 	
-	To types of package exist: 'sw' (abbreviation of 'software', regular packages which contain executables, libraries etc.) and 'conf' (bundle system config files, i.e. those located in \file{/etc}). Packages of type conf differ in how config files are handled. If installed newly, an error will be signalled and not action be performed if any config file is already predent. During upgrading the same thing happens, however if the file was installed by a former version of the package and not modified since then, \program{tpm} replaces it.
+	To types of package exist: 'sw' (abbreviation of 'software', regular packages which contain executables, libraries etc.) and 'conf' (bundle system config files, i.e. those located in \file{/etc}). Packages of type conf differ in how config files are handled. If installed newly, an error will be signalled and no action be performed if any config file is already present. During an upgrade the same thing happens, however if the file was installed by a former version of the package and not modified since then, \program{tpm} replaces it.
 	
 	\section{User interface}
 	\label{sec:user_interface}

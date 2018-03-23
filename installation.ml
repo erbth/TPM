@@ -8,12 +8,14 @@ open Installed_package
 open Configuration
 
 let install_package status repo pkg reason =
-    match pkg.n with
-        | None -> print_endline "Installation: package has no name"; None
-        | Some name ->
+    match (pkg.t, pkg.n) with
+        | (_, None)
+        | (None, _) -> print_endline "Installation: Invalid package"; None
+        | (Some pkg_type, Some pkg_name) ->
 
     print_endline ("Installing \"" ^ (string_of_pkg pkg) ^ "\"=" ^
         (match pkg.v with None -> "?" | Some v -> string_of_version v) ^
+        " (" ^ string_of_pkg_type pkg_type ^ ") " ^
         " from " ^ (string_of_repository repo));
 
     let status = unique_insert_status_tupel status (pkg, reason, Installation)
@@ -24,7 +26,7 @@ let install_package status repo pkg reason =
     (print_ok ();
 
     let package_info_location =
-        form_target_path (Tpm_config.package_info_location ^ "/" ^ name)
+        form_target_path (Tpm_config.package_info_location ^ "/" ^ pkg_name)
     in
 
     let tmp_dir status =
@@ -55,7 +57,7 @@ let install_package status repo pkg reason =
         print_string "    Creating the package info location";
         try
             mkdir_p_at_target
-                (Tpm_config.package_info_location ^ "/" ^ name)
+                (Tpm_config.package_info_location ^ "/" ^ pkg_name)
                 0o755;
             print_ok ();
             Some status
@@ -66,37 +68,72 @@ let install_package status repo pkg reason =
     in
     match create_pkg_info_location (Some status) with None -> None | Some status ->
 
-    print_string "    Determining wich config files must be excluded";
-    let files_to_exclude =
-        List.fold_left
-            (fun efs (_,cf) ->
-                match efs with None -> None | Some efs ->
-                match file_status (form_target_path cf) with
-                    | Other_file -> print_newline (); print_string
-                        ("    config file \"" ^ cf ^ "\" does already exist, "
-                        ^ "hence not installing it");
-                        Some (cf::efs)
-                    | Non_existent -> Some efs
-                    | Directory -> print_newline (); print_string
-                        ("    config file \"" ^ cf ^ "\" does already exist " ^
-                        "as directory");
-                        None
-                    | Read_error -> print_newline (); print_string
-                        ("    read error while testing for config file \"" ^
-                        cf ^ "\"");
-                        None)
-            (Some [])
-            (pkg.cfiles)
+    let sw_determine_files_to_exclude pkg status =
+        print_string "    Determining wich config files must be excluded";
+        match
+            List.fold_left
+                (fun (status, efs) (_, cf) ->
+                    match status with None -> (None, []) | Some status ->
+                    match file_status (form_target_path cf) with
+                        | Other_file -> print_newline (); print_string
+                            ("    config file \"" ^ cf ^ "\" does already " ^
+                            "exist, hence not installing it");
+                            (Some status, cf::efs)
+                        | Non_existent -> (Some status, efs)
+                        | Directory -> print_newline (); print_string
+                            ("    config file \"" ^ cf ^
+                            "\" does already exist as directory");
+                            (None, [])
+                        | Read_error -> print_newline (); print_string
+                            ("    read error while testing for config file \"" ^
+                            cf ^ "\"");
+                            (None, []))
+                (status, [])
+                (pkg.cfiles)
+        with
+            | (None, _) -> print_failed (); (None, [])
+            | (Some status, l) -> print_ok (); (Some status, l)
     in
-    match files_to_exclude with
-        | None -> print_failed (); None
-        | Some files_to_exclude -> print_ok ();    
-    
-    print_string "    installing files";
-    if install_files repo pkg files_to_exclude |> not
-    then (print_failed (); None)
-    else
-    (print_ok ();
+    let conf_determine_files_to_exclude pkg status =
+        (status, [])
+    in
+    let install_files pkg (status, files_to_exclude) =
+        match status with None -> None | Some status ->
+        print_string "    installing files";
+        let files_to_install =
+            List.fold_left
+                (fun fs (_,cf) -> cf::fs)
+                (List.rev pkg.files)
+                pkg.cfiles
+            |> List.rev
+            |> List.filter
+                (fun f -> not (List.exists (fun ef -> f = ef) files_to_exclude))
+        in
+        match
+            List.exists
+                (fun fn ->
+                    match file_status (form_target_path fn) with
+                        | Directory
+                        | Other_file -> print_newline (); print_string
+                            ("    \"" ^ fn ^ "\" exists already"); true
+                        | Read_error -> print_newline (); print_string
+                            ("    can not check for \"" ^ fn ^ "\""); true
+                        | Non_existent -> false)
+                files_to_install
+        with
+            | true -> print_failed (); None
+            | false ->
+                if unpack_files repo pkg files_to_exclude |> not
+                then (print_failed (); None)
+                else (print_ok (); Some status)
+    in
+    let status =
+        (match pkg_type with
+            | Conf -> conf_determine_files_to_exclude pkg (Some status)
+            | Sw -> sw_determine_files_to_exclude pkg (Some status))
+        |> install_files pkg
+    in
+    match status with None -> None | Some status ->
 
     print_string "    Looking for a postinst script";
     let unpack_postinst_cmd =
@@ -194,7 +231,6 @@ let install_package status repo pkg reason =
     Some status
     |> copy_prermsh
     |> acknowledge_change
-    )
     )
     )
 
