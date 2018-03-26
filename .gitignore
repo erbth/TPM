@@ -1,12 +1,11 @@
 # Vim's .swp files
 *.swp
 
-# OCaml binaries
-*.native
-*.byte
+# Object code directory
+/bin
 
-# OCaml build directory
-/_build
+# Archive for distribution
+/tpm-*.tar.xz
 
 # Testing playground
 /playground

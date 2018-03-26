@@ -262,6 +262,8 @@
 	
 	Within a system, the package name must be unique. That is, a package may only be installed once. This implies that at each point in time, only one architectural instance in exactly one version of a package can be installed.
 	
+	Moreover each file on a system belongs to exactly one package. There may not be two packages which provide the same file.
+	
 	\section{About command line output}
 	\label{sec:about_command_line_output}
 	
@@ -271,4 +273,9 @@
 	\label{sec:the_package_info_location}
 	
 	For each package a directory with its name is created in \file{/var/lib/tpm} during installation. \file{/var/lib/tpm} is called package info location and the specific package's sub directory is called this package's package info location. Information which is better stored in a file than a database shall be located there (i.e. \file{postrm.sh}).
+	
+	\section{Special files}
+	\label{sec:special_files}
+	
+	Special files, which are symbolic links, character and block devices, named pipes, and sockets, are treated like non-config files. Tar handles these kinds of files rightly therefore this decision is only relevant to config files, because these are directly processed by \program{tpm}. \program{tpm} treats them like non-config files, even if they are in a location in which only config files exists, because it does not make sense to calculate a checksum for those.
 \end{document}

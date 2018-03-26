@@ -1,3 +1,3 @@
 S .
-B _build
+B bin
 B /home/therb/.opam/4.06.1/lib/xml-light

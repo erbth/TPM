@@ -69,18 +69,24 @@ let set_package_architecture a =
                 | Some pkg -> write_package {pkg with a = Some a}
 
 let add_files_from_destdir () =
-    let process_file fs cfs n p =
+    let process_non_config_file fs cfs ds n p =
+        Some (p::fs, cfs, ds)
+    in
+    let process_config_file fs cfs ds n p =
+        match sha512sum_of_file_opt n with
+            | None -> print_endline
+                ("Unpacked: Calculating the sha512sum of file \"" ^
+                n ^ "\" failed"); None
+            | Some sha512sum -> Some (fs, (sha512sum, p)::cfs, ds)
+    in
+    let process_regular_file fs cfs ds n p =
         if List.exists
             (fun r -> Str.string_match r p 0)
             Tpm_config.conf_path_prefixes
         then
-            match sha512sum_of_file_opt n with
-                | None -> print_endline
-                    ("Unpacked: Calculating the sha512sum of file \"" ^
-                    n ^ "\" failed"); None
-                | Some sha512sum -> Some (fs, (sha512sum, p)::cfs)
+            process_config_file fs cfs ds n p
         else
-            Some (p::fs,cfs)
+            process_non_config_file fs cfs ds n p
     in
     let rec process_dir fs cfs ds d p =
         try
@@ -92,13 +98,18 @@ let add_files_from_destdir () =
                         in
                         let f = d ^ "/" ^ f
                         in
-                        if Sys.is_directory f
-                        then
-                            process_dir fs cfs (p::ds) f p
-                        else
-                            match process_file fs cfs f p with
-                                | None -> None
-                                | Some (fs,cfs) -> Some (fs,cfs,ds)
+                        try
+                            match (Unix.lstat f).st_kind with
+                                | S_DIR -> process_dir fs cfs (p::ds) f p
+                                | S_REG -> process_regular_file fs cfs ds f p
+                                (* Special files are always treated like non config files *)
+                                | _ -> process_non_config_file fs cfs ds f p
+                        with
+                            | Unix.Unix_error (c,_,_) -> print_endline
+                                ("lstat on \"" ^ f ^ "\" failed: " ^
+                                Unix.error_message c); None
+                            | _ -> print_endline ("lstat on \"" ^ f ^
+                                "\" failed"); None
                         )
                     (Some (fs,cfs,ds))
                     c)
