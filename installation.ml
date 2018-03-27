@@ -189,9 +189,9 @@ let install_package status repo pkg reason =
             " > /dev/zero 2>&1"
         in
         let compress_cmd =
-            !program_gzip ^ " " ^
+            !program_gzip ^ " -c " ^
             Tpm_config.tmp_dir ^ "/" ^ Tpm_config.prermsh_name ^
-            " -c  > " ^
+            " > " ^
             package_info_location ^ "/" ^ Tpm_config.prermsh_name ^ ".gz"
         in
         try

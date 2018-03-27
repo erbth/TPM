@@ -105,6 +105,16 @@ let read_env_vars () =
     try program_cd := Unix.getenv "TPM_PROGRAM_CD" with _ -> ();
     try program_gzip := Unix.getenv "TPM_PROGRAM_GZIP" with _ -> ()
 
+(* Set TPM_TARGET for the packaging scripts *)
+let put_env_vars () =
+    try
+        Unix.putenv "TPM_TARGET" !target_system
+    with
+        | Unix.Unix_error (c,_,_) -> print_endline ("Can not set \"TPM_TARGET\" " ^
+            "in the processes environment: " ^ Unix.error_message c); exit 1
+        | _ -> print_endline ("Can not set \"TPM_TARGET\" in the processes " ^
+            "environment."); exit 1
+
 (* Commands *)
 let create_desc_type = ref None
 let cmd_create_desc s = create_desc_type := Some s
@@ -227,6 +237,7 @@ let main () =
     read_env_vars ();
     parse cmd_specs cmd_anon usage_msg;
     check_cmdline ();
+    put_env_vars ();
     match !set_name with
         Some n -> if set_package_name n then exit 0 else exit 1
     | None -> match !set_version with
