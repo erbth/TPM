@@ -18,57 +18,16 @@ let install_package status repo pkg reason =
         " (" ^ string_of_pkg_type pkg_type ^ ") " ^
         " from " ^ (string_of_repository repo));
 
-    let status = unique_insert_status_tupel status (pkg, reason, Installation)
-    in
-    print_string "    Marking the change in status";
-    if write_status status |> not then (print_failed (); None)
-    else
-    (print_ok ();
-
     let package_info_location =
         form_target_path (Tpm_config.package_info_location ^ "/" ^ pkg_name)
     in
 
-    let tmp_dir status =
-        match status with None -> None | Some status ->
-        print_string "    Creating a temporary directory";
-        if create_tmp_dir ()
-        then (print_ok (); Some status)
-        else (print_failed (); None)
+    let conf_determine_files_to_exclude pkg status =
+        (status, [])
     in
-
-    let gain_access status =
-        match status with None -> (None, "") | Some status ->
-        print_string "    Gaining access to the package";
-        match provide_transport_shape repo pkg with
-            | None -> print_failed (); (None, "")
-            | Some path -> print_ok (); (Some status, path)
-    in
-
-    let (status, transport_path) =
-        Some status
-        |> tmp_dir
-        |> gain_access
-    in
-    match status with None -> None | Some status ->
-
-    let create_pkg_info_location status =
-        match status with None -> None | Some status ->
-        print_string "    Creating the package info location";
-        try
-            mkdir_p_at_target
-                (Tpm_config.package_info_location ^ "/" ^ pkg_name)
-                0o755;
-            print_ok ();
-            Some status
-        with
-            | Unix.Unix_error (c,_,_) -> print_newline (); print_string
-                ("    " ^ Unix.error_message c); print_failed (); None
-            | _ -> print_failed (); None
-    in
-    match create_pkg_info_location (Some status) with None -> None | Some status ->
 
     let sw_determine_files_to_exclude pkg status =
+        match status with None -> None, [] | Some status ->
         print_string "    Determining wich config files must be excluded";
         match
             List.fold_left
@@ -88,18 +47,23 @@ let install_package status repo pkg reason =
                             ("    read error while testing for config file \"" ^
                             cf ^ "\"");
                             (None, []))
-                (status, [])
+                (Some status, [])
                 (pkg.cfiles)
         with
             | (None, _) -> print_failed (); (None, [])
             | (Some status, l) -> print_ok (); (Some status, l)
     in
-    let conf_determine_files_to_exclude pkg status =
-        (status, [])
+
+    let determine_files_to_exclude pkg_type status =
+        match status with None -> None, [] | Some status ->
+        (match pkg_type with
+            | Conf -> conf_determine_files_to_exclude pkg (Some status)
+            | Sw -> sw_determine_files_to_exclude pkg (Some status))
     in
-    let install_files pkg (status, files_to_exclude) =
-        match status with None -> None | Some status ->
-        print_string "    installing files";
+
+    let check_for_file_collisions (status, excluded_files) =
+        match status with None -> None, [] | Some status ->
+        print_string "    Checking if any of the package's files exists already";
         let files_to_install =
             List.fold_left
                 (fun fs (_,cf) -> cf::fs)
@@ -107,7 +71,7 @@ let install_package status repo pkg reason =
                 pkg.cfiles
             |> List.rev
             |> List.filter
-                (fun f -> not (List.exists (fun ef -> f = ef) files_to_exclude))
+                (fun f -> not (List.exists (fun ef -> f = ef) excluded_files))
         in
         match
             List.exists
@@ -121,70 +85,111 @@ let install_package status repo pkg reason =
                         | Non_existent -> false)
                 files_to_install
         with
-            | true -> print_failed (); None
-            | false ->
-                if unpack_files repo pkg files_to_exclude |> not
-                then (print_failed (); None)
-                else (print_ok (); Some status)
+            | true -> print_failed (); None, []
+            | false -> print_ok (); Some status, excluded_files
     in
-    let status =
-        (match pkg_type with
-            | Conf -> conf_determine_files_to_exclude pkg (Some status)
-            | Sw -> sw_determine_files_to_exclude pkg (Some status))
-        |> install_files pkg
-    in
-    match status with None -> None | Some status ->
 
-    print_string "    Looking for a postinst script";
-    let unpack_postinst_cmd =
-        !program_tar ^ " -xf " ^ transport_path ^ " -C " ^
-        Tpm_config.tmp_dir ^ " " ^ Tpm_config.postinstsh_name ^ " 2>&1"
+    let tmp_dir (status, excluded_files) =
+        match status with None -> None, [] | Some status ->
+        print_string "    Creating a temporary directory";
+        if create_tmp_dir ()
+        then (print_ok (); Some status, excluded_files)
+        else (print_failed (); None, excluded_files)
     in
-    let hp =
+
+    let gain_access (status, excluded_files) =
+        match status with None -> (None, [], "") | Some status ->
+        print_string "    Gaining access to the package";
+        match provide_transport_shape repo pkg with
+            | None -> print_failed (); (None, [], "")
+            | Some path -> print_ok (); (Some status, excluded_files, path)
+    in
+
+    let mark_change (status, excluded_files, tpath) =
+        match status with None -> None, [], "" | Some status ->
+        print_string "    Marking the change in status";
+        let status = unique_insert_status_tupel status (pkg, reason, Installation)
+        in
+        if write_status status |> not then (print_failed (); None, [], "")
+        else (print_ok (); Some status, excluded_files, tpath)
+    in
+
+    let create_pkg_info_location pkg_name (status, excluded_files, tpath) =
+        match status with None -> None, [], "" | Some status ->
+        print_string "    Creating the package info location";
         try
-            let ic = Unix.open_process_in unpack_postinst_cmd
-            in
-            Some (Unix.close_process_in ic = Unix.WEXITED 0)
+            mkdir_p_at_target
+                (Tpm_config.package_info_location ^ "/" ^ pkg_name)
+                0o755;
+            print_ok ();
+            Some status, excluded_files, tpath 
         with
-            | Unix.Unix_error (c,_,_) -> print_newline(); print_string
-                ("    testing for a postinst script failed: " ^
-                (Unix.error_message c)); None
-            | _ -> print_newline (); print_string
-                ("    testing for a postinst script failed"); None
+            | Unix.Unix_error (c,_,_) -> print_newline (); print_string
+                ("    " ^ Unix.error_message c); print_failed (); None, [], ""
+            | _ -> print_failed (); None, [], ""
     in
-    match hp with None -> print_failed (); None | Some hp ->
-    print_ok ();
-    let s =
-        (if hp
-        then
-            (print_string "    Executing the postinst script";
-            if
-                try
-                    let postinstsh =
-                        Tpm_config.tmp_dir ^ "/" ^ Tpm_config.postinstsh_name
-                    in
-                    Unix.chmod postinstsh 0o755;
-                    Sys.command postinstsh = 0
-                with
-                    | Unix.Unix_error (c,_,_) -> print_newline (); print_string
-                        ("    " ^ Unix.error_message c); false
-                    | Sys_error msg -> print_newline (); print_string
-                        ("    " ^ msg); false
-                    | _ -> false
-            then (print_ok (); true)
-            else (print_failed (); false))
-        else
-            (print_endline "    This package has no postinst script"; true))
-    in
-    if not s then None
-    else
-    (
 
-    let copy_prermsh status =
-        match status with None -> None | Some status ->
+    let install_files pkg (status, excluded_files, tpath) =
+        match status with None -> None, "" | Some status ->
+        print_string "    installing files";
+        
+        if unpack_files repo pkg excluded_files |> not
+        then (print_failed (); None, "")
+        else (print_ok (); Some status, tpath)
+    in
+
+    let exec_postinstsh (status, tpath) =
+        match status with None -> None, "" | Some status ->
+        print_string "    Looking for a postinst script";
+        let unpack_postinst_cmd =
+            !program_tar ^ " -xf " ^ tpath ^ " -C " ^
+            Tpm_config.tmp_dir ^ " " ^ Tpm_config.postinstsh_name ^ " 2>&1"
+        in
+        let hp =
+            try
+                let ic = Unix.open_process_in unpack_postinst_cmd
+                in
+                Some (Unix.close_process_in ic = Unix.WEXITED 0)
+            with
+                | Unix.Unix_error (c,_,_) -> print_newline(); print_string
+                    ("    testing for a postinst script failed: " ^
+                    (Unix.error_message c)); None
+                | _ -> print_newline (); print_string
+                    ("    testing for a postinst script failed"); None
+        in
+        match hp with None -> print_failed (); None, "" | Some hp ->
+        print_ok ();
+        let s =
+            (if hp
+            then
+                (print_string "    Executing the postinst script";
+                if
+                    try
+                        let postinstsh =
+                            Tpm_config.tmp_dir ^ "/" ^ Tpm_config.postinstsh_name
+                        in
+                        Unix.chmod postinstsh 0o755;
+                        Sys.command postinstsh = 0
+                    with
+                        | Unix.Unix_error (c,_,_) -> print_newline (); print_string
+                            ("    " ^ Unix.error_message c); false
+                        | Sys_error msg -> print_newline (); print_string
+                            ("    " ^ msg); false
+                        | _ -> false
+                then (print_ok (); true)
+                else (print_failed (); false))
+            else
+                (print_endline "    This package has no postinst script"; true))
+        in
+        if not s then None, ""
+        else Some status, tpath
+    in
+
+    let copy_prermsh (status, tpath) =
+        match status with None -> None, "" | Some status ->
         print_string "    Copying files to the package info location";
         let unpack_cmd =
-            !program_tar ^ " -xf " ^ transport_path ^
+            !program_tar ^ " -xf " ^ tpath ^
             " -C " ^ Tpm_config.tmp_dir ^ " " ^ Tpm_config.prermsh_name ^
             " > /dev/zero 2>&1"
         in
@@ -197,7 +202,7 @@ let install_package status repo pkg reason =
         try
             if Sys.command unpack_cmd <> 0
             then
-                (print_ok (); Some status)
+                (print_ok (); Some status, tpath)
             else
                 let pu = Unix.umask 0o022
                 in
@@ -210,15 +215,16 @@ let install_package status repo pkg reason =
                 in
                 let _ = Unix.umask pu
                 in
-                print_ok (); status
+                print_ok (); status, tpath
         with
             | Sys_error msg -> print_newline (); print_string ("    " ^ msg);
-                print_failed (); None
+                print_failed (); None, ""
             | Unix.Unix_error (c,_,_) -> print_newline (); print_string
-                ("    " ^ Unix.error_message c); print_failed (); None
-            | _ -> print_failed (); None
+                ("    " ^ Unix.error_message c); print_failed (); None, ""
+            | _ -> print_failed (); None, ""
     in
-    let acknowledge_change status =
+
+    let acknowledge_change (status, tpath) =
         match status with None -> None | Some status ->
         print_string "    Acknowledging the change in status";
         let status = update_status_tupel status (pkg, reason, Installed)
@@ -227,12 +233,18 @@ let install_package status repo pkg reason =
         then (print_ok (); Some status)
         else (print_failed (); None)
     in
-
+    
     Some status
+    |> determine_files_to_exclude pkg_type
+    |> check_for_file_collisions
+    |> tmp_dir
+    |> gain_access
+    |> mark_change
+    |> create_pkg_info_location pkg_name
+    |> install_files pkg
     |> copy_prermsh
+    |> exec_postinstsh
     |> acknowledge_change
-    )
-    )
 
 let upgrade_package status repo pkg =
     print_endline ("Upgrade: not supported yet (package \"" ^
