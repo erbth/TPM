@@ -1,7 +1,7 @@
 (* This file must not be confused with the runtime configuration provided through
  * in configuration.ml. This file is like autotool's config.h in C. *)
 
-let version = (1,0,0)
+let version = (1,0,1)
 let default_target_system = "/"
 let desc_file_name = "desc.xml"
 let destdir_name = "destdir"

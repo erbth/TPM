@@ -5,7 +5,7 @@ PKGS :=unix,str,xml-light
 PREFIX ?= /usr/local
 DESTDIR ?= /
 
-TPM_VERSION := 1.0.0
+TPM_VERSION := 1.0.1
 
 OBJDIR := bin
 
@@ -54,6 +54,7 @@ $(OBJDIR)/%.cmx: %.ml $(wildcard %.mli) | $(OBJDIR)
 
 .PHONY: install uninstall
 install: $(OBJDIR)/tpm
+	install -dm755 $(DESTDIR)/$(PREFIX)/bin
 	install -m755 $< $(DESTDIR)/$(PREFIX)/bin
 
 uninstall:

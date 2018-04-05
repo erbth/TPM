@@ -195,7 +195,7 @@ let create_packed_form () =
             else
             match (pkg.n, pkg.v, pkg.a) with
                 | (Some n, Some v, Some a) ->
-                    let archivename = n ^ "-" ^ (string_of_version v) ^ "_" ^
+                    let archivename = n ^ "_" ^
                         (string_of_arch a) ^ ".tpm.tar"
                     in
                         pack archivename

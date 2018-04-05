@@ -187,7 +187,7 @@ let pkg_newer p1 p2 = match (p1.v, p2.v) with
 (* These functions are here to avoid a circular dependency between Packed_package
  * and Repository *)
 let pkg_name_of_packed_name n =
-    match String.rindex_opt n '-' with
+    match String.rindex_opt n '_' with
         | None ->
             print_endline ("Packed: Invalid package name: \"" ^ n ^ "\"");
             None
@@ -196,7 +196,6 @@ let pkg_name_of_packed_name n =
 let packed_name_of_pkg pkg =
     match (pkg.n, pkg.v, pkg.a) with
         | (Some n, Some v, Some a) -> Some (
-            n ^ "-" ^
-            (string_of_version v) ^ "_" ^
+            n ^ "_" ^
             (string_of_arch a) ^ ".tpm.tar")
         | _ -> None

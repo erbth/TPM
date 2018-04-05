@@ -50,6 +50,8 @@
 		\item[\file{prerm.sh}] This script will be executed before the package's files are removed. Any file that was generated in \file{postinst.sh} must be removed in this script. Since a package can be removed without a repository that hosts it, this script is compressed and copied to \file{/var/lib/tpm/<package-name>/postinst.sh.gz} during installation. When the package is removed forcefully, this script is executed as well. Therefore, it must respect this situation, in which not all of its files might have been installed.
 		
 		\item[\file{preupdate.sh}] This script will be executed before any files of the packages old version are removed or any new ones are installed. It must guaranty that no files except config files that differ from those shipped with the package stay back when the package is removed.
+		
+		\item[\file{configure.sh}] This script is executed after all runtime dependencies of the package were installed.
 	\end{description}
 
 	\paragraph{packed/transport:}
@@ -64,10 +66,12 @@
 		\item[\file{prerm.sh}] '\file{prerm.sh}'
 		
 		\item[\file{preupdate.sh}] '\file{preupdate.sh}'
+		
+		\item[\file{configure.sh}] '\file{configure.sh}'
 	\end{description}
 	
 	\noindent
-	The name of the archive must be <package name>-<version>\_<architecture>.tpm.tar. Ther version and architecture strings must follow the same scheme as those in \file{desc.xml} described later.
+	The name of the archive must be <package name>\_<architecture>.tpm.tar. Ther version and architecture strings must follow the same scheme as those in \file{desc.xml} described later.
 	
 	\paragraph{installed:}
 	During installation \program{tpm} tests if any non-config file in destdir is present in the runtime system's directory structure. 'runtime system' refers to the target system to which the package is installed. If this is not the case, it extracts the content of \file{destdir.tar.gx} to the runtime system's root directory. Otherwise \program{tpm} signals an error and does not modify the runtime system's state. If the package is newely installed and features config files, \program{tpm} installs all non present ones. Before any modification is made, \program{tpm} inserts the package into its database (also referred to as 'status') and flags it as 'installation in progress'. Finally, this label is removed and the entry possibly updated to contain all files which are currently installed for the package. This procedure makes modifications atomic.
@@ -118,6 +122,8 @@
 	\def\arraystretch{1.5}
 	\begin{tabularx}{\textwidth}{lX}
 		\texttt{-{}-target} & Root of the system which is managed; This can be specified with the environment variable \variable{TPM\_TARGET}, however \texttt{-{}-target} precedes. \\
+		
+		\texttt{-{}-ignore-dependencies} & Do not respect the package's dependencies during installation, removal or upgrade.
 	\end{tabularx}
 	\egroup
 	
