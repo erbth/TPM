@@ -64,3 +64,17 @@ let find_package_in_all_repos name =
             List.fold_left (fun rps p -> (r,p)::rps) rps pkgs)
         []
         cfg.repos
+
+let find_and_select_package_in_all_repos name =
+    find_package_in_all_repos name |> select_version_to_install
+
+let find_and_select_packages_in_all_repos (cfg:configuration) names =
+    List.fold_left
+            (fun a name -> match a with None -> None | Some a ->
+                match find_and_select_package_in_all_repos name with
+                    | None -> print_endline ("Package \"" ^ name ^
+                        "\" not found for architecture " ^ (string_of_arch cfg.a));
+                        None
+                    | Some rp -> Some (rp::a))
+            (Some [])
+            names

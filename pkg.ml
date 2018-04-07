@@ -22,6 +22,17 @@ type pkg = {
     rdeps:string list;
 }
 
+type static_pkg = {
+    st:pkg_type;                       (* package type *)
+    sn:string;                         (* package name *)
+    sv:version;                        (* version *)
+    sa:arch;                           (* architecture *)
+    sfiles:string list;                (* path *)
+    scfiles:(string * string) list;    (* sha512sum * path *)
+    sdirs: string list;                (* path *)
+    srdeps:string list;
+}
+
 let empty_pkg = {
     t = None;
     n = None;
@@ -37,6 +48,13 @@ let empty_pkg = {
 let string_of_pkg p = match p.n with
     | Some n -> n
     | _ -> "???"
+
+let static_of_dynamic_pkg pkg =
+    match (pkg.t, pkg.n, pkg.v, pkg.a) with
+        | (Some t, Some n, Some v, Some a) -> Some { st = t; sn = n; sv = v; sa = a;
+            sfiles = pkg.files; scfiles = pkg.cfiles; sdirs = pkg.dirs;
+            srdeps = pkg.rdeps }
+        | _ -> None
 
 let xml_of_pkg (p:pkg) =
     let xes = []
@@ -199,3 +217,8 @@ let packed_name_of_pkg pkg =
             n ^ "_" ^
             (string_of_arch a) ^ ".tpm.tar")
         | _ -> None
+
+let compare_pkgs_by_name pkg1 pkg2 =
+    match (pkg1.n, pkg2.n) with
+        | (Some n1, Some n2) -> compare_names n1 n2
+        | _ -> raise (Critical_error "Pkg: uncomparable packages")

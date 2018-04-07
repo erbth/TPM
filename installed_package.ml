@@ -7,59 +7,93 @@ let list_installed_packages () =
     match read_status () with None -> false | Some status ->
     List.iter
         (fun (pkg,_,_) -> print_endline (string_of_pkg pkg))
-        status;
+        (select_all_status_tuples status |> List.sort compare_status_tuples);
     true
 
-let get_dirty_packages status print =
-    let _,pps =
-        (* Accumulator: (double counter, problematic) *)
+let check_installation status print =
+    let _,pr =
+        (* Accumulator: (double counter, problem) *)
         List.fold_left
-            (fun (cts,pps) t ->
+            (fun (cts,pr) t ->
                 let (pkg, preason, pstate) = t
                 in
-                let g =
-                if pstate <> Installed
-                then
-                    ((if print
+                let pr =
+                    (if pstate <> Configured
                     then
-                        print_endline ("\"" ^ (string_of_pkg pkg) ^
-                            "\" is in the following dirty state: " ^
-                            (string_of_installation_status pstate))
-                    else
-                        ());
-                    false)
-                else true
+                        if pstate <> Installed
+                        then
+                            ((if print
+                            then
+                                print_endline ("\"" ^ (string_of_pkg pkg) ^
+                                    "\" is in the following critical dirty " ^
+                                    "state: " ^
+                                    (string_of_installation_status pstate))
+                            else
+                                ());
+                            check_critical pr true)
+                        else
+                            ((if print
+                            then
+                                print_endline ("\"" ^ (string_of_pkg pkg) ^
+                                    "\" is in the following noncritical " ^
+                                    "dirty state: " ^
+                                    (string_of_installation_status pstate))
+                            else
+                                ());
+                            check_non_critical pr true)
+                    else pr)
                 in
-                let g =
-                    if (List.exists (fun e -> compare_tupels e t = 0) cts)
+                let pr =
+                    (if (List.exists (fun e -> compare_status_tuples e t = 0) cts)
                     then
                         ((if print
                         then
                             print_endline ("Duplicate package: \"" ^
                                 (string_of_pkg pkg) ^ "\"")
                         else ());
-                        false)
+                        true)
                     else
-                        g
+                        false)
+                    |> check_critical pr
                 in
-                (t::cts, if g then pps else pkg::pps))
-            ([],[])
-            status
+                let pr =
+                    (List.exists
+                        (fun n ->
+                            if (not (is_pkg_name_installed status n))
+                            then ((if print
+                                then print_endline ("Package \"" ^ n ^
+                                    "\" not installed but required by \"" ^
+                                    string_of_pkg pkg ^ "\"")
+                                else ());
+                                true)
+                            else (if not (is_pkg_name_configured status n)
+                                then ((if print
+                                    then print_endline ("Package \"" ^ n ^
+                                        "\" not configured but required by \"" ^
+                                        string_of_pkg pkg ^ "\"")
+                                    else ());
+                                    true)
+                                else false))
+                        pkg.rdeps)
+                    |> check_non_critical pr
+                in
+                (t::cts, pr))
+            ([],No_problem)
+            (select_all_status_tuples status)
     in
-    pps
-
-let check_installation status print =
-    get_dirty_packages status print = []
+    pr
 
 let show_problems_with_installation () =
     print_target ();
     match read_status () with None -> false | Some status ->
     match check_installation status true with
-        | true -> print_endline "No problems detected"; true
-        | false -> print_endline "Problems found"; false
+        | No_problem -> print_endline "No problems detected"; true
+        | Non_critical -> print_endline
+            "Noncritical problems but no critical problems found"; false
+        | Critical -> print_endline "Critical problems found"; false
 
 let force_remove status name =
-    match select_status_tupel_by_name status name with
+    match select_status_tuple_by_name status name with
         | None -> print_endline ("Force_Remove: Package \"" ^ name ^
             "\" is not installed"); None
         | Some (pkg, preason, pstate) ->
@@ -93,7 +127,7 @@ let force_remove status name =
     print_ok ();    
     
     print_string "    Marking removal in status";
-    let status = update_status_tupel status (pkg, preason, Removal)
+    let status = update_status_tuple status (pkg, preason, Removal)
     in
     if write_status status |> not then (print_failed (); None)
     else
@@ -213,7 +247,7 @@ let force_remove status name =
         match status with None -> None | Some status ->
         print_string "    Removing the package info location";
         match file_status pkg_info_location with
-            | Non_existent -> Some status
+            | Non_existent -> print_ok (); Some status
             | _ ->
                 if rmdir_r pkg_info_location
                 then (print_ok (); Some status)
@@ -222,7 +256,7 @@ let force_remove status name =
     let remove_from_status status =
         match status with None -> None | Some status ->
         print_string "    Removing package from status";
-        let status = delete_status_tupel status (pkg, preason, Removal)
+        let status = delete_status_tuple status (pkg, preason, Removal)
         in
         if write_status status |> not then (print_failed (); None)
         else (print_ok (); Some status)

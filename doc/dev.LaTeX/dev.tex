@@ -45,13 +45,13 @@
 		
 		The name 'destdir' originates in the Make variable \variable{DESTDIR} that can be used to install software that is built with GNU Autotools to a different directory.
 		
-		\item[\file{postinst.sh}] This script will be executed after the package's files are installed. Its semantic must be independent of the working directory it is executed in. The root of the target system is passed as the environment variable \variable{TPM\_TARGET}. The same is required for the other two scripts.
+		\item[\file{postinst.sh}] This script will be executed after the package's files are installed. Its semantic must be independent of the working directory it is executed in. The script is executed with \variable{TPM\_TARGET} as working directory. The same is required for the other two scripts.
 		
-		\item[\file{prerm.sh}] This script will be executed before the package's files are removed. Any file that was generated in \file{postinst.sh} must be removed in this script. Since a package can be removed without a repository that hosts it, this script is compressed and copied to \file{/var/lib/tpm/<package-name>/postinst.sh.gz} during installation. When the package is removed forcefully, this script is executed as well. Therefore, it must respect this situation, in which not all of its files might have been installed.
+		\item[\file{prerm.sh}] This script will be executed before the package's files are removed. Any file that was generated in \file{postinst.sh} must be removed in this script. Since a package can be removed without a repository that hosts it, this script is copied to \file{/var/lib/tpm/<package-name>/prerm.sh} during installation. When the package is removed forcefully, this script is executed as well. Therefore, it must respect this situation, in which not all of its files might have been installed.
 		
 		\item[\file{preupdate.sh}] This script will be executed before any files of the packages old version are removed or any new ones are installed. It must guaranty that no files except config files that differ from those shipped with the package stay back when the package is removed.
 		
-		\item[\file{configure.sh}] This script is executed after all runtime dependencies of the package were installed.
+		\item[\file{configure.sh}] This script is executed after all runtime dependencies of the package were installed, and if \program{tpm} is invoked with \file{/} as target system (e.g. in a chroot-environment or on a real system).
 	\end{description}
 
 	\paragraph{packed/transport:}
@@ -113,6 +113,11 @@
 		\texttt{-{}-upgrade} & Upgrade all upgradeable packages \\
 		
 		\texttt{-{}-install-from-file <name.tpm.tar>} & Install or upgrade from a \texttt{.tpm.tar} file \\
+		
+		\green{\texttt{-{}-dependency-graph <name1>, \dots}} & Print the dependency graph for the specified packages in the dot format \\
+		
+		\green{\texttt{-{}-reverse-dependencies <name>}} & List the installed packages that depend on the specified package \\
+		
 	\end{tabularx}
 	\egroup
 
@@ -123,7 +128,9 @@
 	\begin{tabularx}{\textwidth}{lX}
 		\texttt{-{}-target} & Root of the system which is managed; This can be specified with the environment variable \variable{TPM\_TARGET}, however \texttt{-{}-target} precedes. \\
 		
-		\texttt{-{}-ignore-dependencies} & Do not respect the package's dependencies during installation, removal or upgrade.
+		\texttt{-{}-ignore-dependencies} & Do not respect the package's dependencies during installation, removal or upgrade. \\
+		
+		\texttt{-{}-ignore-noncritical} & Ignore non critical problems \\
 	\end{tabularx}
 	\egroup
 	
@@ -135,6 +142,15 @@
 	\begin{itemize}
 		\item Packages in a dirty state, which is any state except 'installed'
 		\item Packages that are installed multiple times
+		\item Packages of which runtime dependencies are not installed or not configured
+	\end{itemize}
+
+	\paragraph{Noncritical problems} Noncritical problems can be ignored and changes to the system's state be made by passing the \texttt{-{}-ignore-noncritical} parameters. They are:
+	
+	\noindent
+	\begin{itemize}
+		\item Dependency violations
+		\item Packages that are installed but not configured and also not in the state configuring
 	\end{itemize}
 	
 	\subsection{Creating packages}
@@ -220,7 +236,7 @@
 	
 	\noindent
 	\dirtree{.1 <status file\_version=''1.0''>.
-		.2 <tupel> .
+		.2 <tuple> .
 		.3 <sw \dots> | <config \dots> \DTcomment{package element equal to one in \file{desc.xml}; The file\_version attribute must match the file\_version of status.}.
 		.3 <reason> \DTcomment{\{auto | manua \}}.
 		.3 <status> \DTcomment{\{installation | installed | removal | removed\}}.

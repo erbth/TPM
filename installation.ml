@@ -6,27 +6,48 @@ open Status
 open Packed_package
 open Installed_package
 open Configuration
+open Depres
 
-let install_package status repo pkg reason =
-    match (pkg.t, pkg.n) with
-        | (_, None)
-        | (None, _) -> print_endline "Installation: Invalid package"; None
-        | (Some pkg_type, Some pkg_name) ->
+(* Filters that are useful for constructing pipelines of operations to
+ * install and remove packages *)
+let create_tmp_dir_filter status =
+    match status with None -> None | Some status ->
+    print_string "    Creating a temporary directory";
+    if create_or_clean_tmp_dir ()
+    then (print_ok (); Some status)
+    else (print_failed (); None)
 
-    print_endline ("Installing \"" ^ (string_of_pkg pkg) ^ "\"=" ^
-        (match pkg.v with None -> "?" | Some v -> string_of_version v) ^
-        " (" ^ string_of_pkg_type pkg_type ^ ") " ^
-        " from " ^ (string_of_repository repo));
+let unpack_package_filter repo pkg status =
+    match status with None -> None | Some status ->
+    print_string "    Unpacking the package";
+    match unpack_packed_form repo pkg with
+        | false -> print_failed (); None
+        | true -> print_ok (); Some status
 
-    let package_info_location =
-        form_target_path (Tpm_config.package_info_location ^ "/" ^ pkg_name)
+let check_for_file_collisions_filter spkg status =
+    match status with None -> None | Some status ->
+    print_string "    Checking if any of the package's files exist already";
+    match
+        List.fold_left
+            (fun s fn ->
+                match file_status (form_target_path fn) with
+                    | Directory
+                    | Other_file -> print_newline (); print_string
+                        ("    \"" ^ fn ^ "\" exists already"); None
+                    | Read_error -> print_newline (); print_string
+                        ("    can not check for \"" ^ fn ^ "\""); None
+                    | Non_existent -> s)
+            (Some status)
+            spkg.sfiles
+    with
+        | None -> print_failed (); None
+        | Some status -> print_ok (); Some status
+
+let install_determine_files_to_exclude_filter spkg status =
+    let install_conf_determine_files_to_exclude spkg status =
+            (status, [])
     in
-
-    let conf_determine_files_to_exclude pkg status =
-        (status, [])
-    in
-
-    let sw_determine_files_to_exclude pkg status =
+    let install_sw_determine_files_to_exclude spkg status =
         match status with None -> None, [] | Some status ->
         print_string "    Determining wich config files must be excluded";
         match
@@ -48,186 +69,161 @@ let install_package status repo pkg reason =
                             cf ^ "\"");
                             (None, []))
                 (Some status, [])
-                (pkg.cfiles)
+                (spkg.scfiles)
         with
             | (None, _) -> print_failed (); (None, [])
             | (Some status, l) -> print_ok (); (Some status, l)
     in
+    match status with None -> None, [] | Some status ->
+    (match spkg.st with
+        | Conf -> install_conf_determine_files_to_exclude spkg (Some status)
+        | Sw -> install_sw_determine_files_to_exclude spkg (Some status))
 
-    let determine_files_to_exclude pkg_type status =
-        match status with None -> None, [] | Some status ->
-        (match pkg_type with
-            | Conf -> conf_determine_files_to_exclude pkg (Some status)
-            | Sw -> sw_determine_files_to_exclude pkg (Some status))
-    in
+let unpack_files_filter pkg (status, excluded_files) =
+    match status with None -> None | Some status ->
+    (* This flushes stdout *)
+    print_endline "    Unpacking files";
+    print_string  "                   ";
+    
+    if unpack_files_from_tmp pkg excluded_files
+    then (print_ok (); Some status)
+    else (print_failed (); None)
 
-    let check_for_file_collisions (status, excluded_files) =
-        match status with None -> None, [] | Some status ->
-        print_string "    Checking if any of the package's files exists already";
-        let files_to_install =
-            List.fold_left
-                (fun fs (_,cf) -> cf::fs)
-                (List.rev pkg.files)
-                pkg.cfiles
-            |> List.rev
-            |> List.filter
-                (fun f -> not (List.exists (fun ef -> f = ef) excluded_files))
-        in
-        match
-            List.exists
-                (fun fn ->
-                    match file_status (form_target_path fn) with
-                        | Directory
-                        | Other_file -> print_newline (); print_string
-                            ("    \"" ^ fn ^ "\" exists already"); true
-                        | Read_error -> print_newline (); print_string
-                            ("    can not check for \"" ^ fn ^ "\""); true
-                        | Non_existent -> false)
-                files_to_install
-        with
-            | true -> print_failed (); None, []
-            | false -> print_ok (); Some status, excluded_files
-    in
-
-    let tmp_dir (status, excluded_files) =
-        match status with None -> None, [] | Some status ->
-        print_string "    Creating a temporary directory";
-        if create_tmp_dir ()
-        then (print_ok (); Some status, excluded_files)
-        else (print_failed (); None, excluded_files)
-    in
-
-    let gain_access (status, excluded_files) =
-        match status with None -> (None, [], "") | Some status ->
-        print_string "    Gaining access to the package";
-        match provide_transport_shape repo pkg with
-            | None -> print_failed (); (None, [], "")
-            | Some path -> print_ok (); (Some status, excluded_files, path)
-    in
-
-    let mark_change (status, excluded_files, tpath) =
-        match status with None -> None, [], "" | Some status ->
-        print_string "    Marking the change in status";
-        let status = unique_insert_status_tupel status (pkg, reason, Installation)
-        in
-        if write_status status |> not then (print_failed (); None, [], "")
-        else (print_ok (); Some status, excluded_files, tpath)
-    in
-
-    let create_pkg_info_location pkg_name (status, excluded_files, tpath) =
-        match status with None -> None, [], "" | Some status ->
-        print_string "    Creating the package info location";
-        try
-            mkdir_p_at_target
-                (Tpm_config.package_info_location ^ "/" ^ pkg_name)
-                0o755;
-            print_ok ();
-            Some status, excluded_files, tpath 
-        with
-            | Unix.Unix_error (c,_,_) -> print_newline (); print_string
-                ("    " ^ Unix.error_message c); print_failed (); None, [], ""
-            | _ -> print_failed (); None, [], ""
-    in
-
-    let install_files pkg (status, excluded_files, tpath) =
-        match status with None -> None, "" | Some status ->
-        print_string "    installing files";
-        
-        if unpack_files repo pkg excluded_files |> not
-        then (print_failed (); None, "")
-        else (print_ok (); Some status, tpath)
-    in
-
-    let exec_postinstsh (status, tpath) =
-        match status with None -> None, "" | Some status ->
-        print_string "    Looking for a postinst script";
-        let unpack_postinst_cmd =
-            !program_tar ^ " -xf " ^ tpath ^ " -C " ^
-            Tpm_config.tmp_dir ^ " " ^ Tpm_config.postinstsh_name ^ " 2>&1"
-        in
-        let hp =
-            try
-                let ic = Unix.open_process_in unpack_postinst_cmd
-                in
-                Some (Unix.close_process_in ic = Unix.WEXITED 0)
-            with
-                | Unix.Unix_error (c,_,_) -> print_newline(); print_string
-                    ("    testing for a postinst script failed: " ^
-                    (Unix.error_message c)); None
-                | _ -> print_newline (); print_string
-                    ("    testing for a postinst script failed"); None
-        in
-        match hp with None -> print_failed (); None, "" | Some hp ->
+let create_pkg_info_location_filter spkg status =
+    match status with None -> None | Some status ->
+    print_string "    Creating the package info location";
+    try
+        mkdir_p_at_target
+            (Tpm_config.package_info_location ^ "/" ^ spkg.sn)
+            0o755;
         print_ok ();
-        let s =
-            (if hp
-            then
-                (print_string "    Executing the postinst script";
-                if
-                    try
-                        let postinstsh =
-                            Tpm_config.tmp_dir ^ "/" ^ Tpm_config.postinstsh_name
-                        in
-                        Unix.chmod postinstsh 0o755;
-                        Sys.command postinstsh = 0
-                    with
-                        | Unix.Unix_error (c,_,_) -> print_newline (); print_string
-                            ("    " ^ Unix.error_message c); false
-                        | Sys_error msg -> print_newline (); print_string
-                            ("    " ^ msg); false
-                        | _ -> false
-                then (print_ok (); true)
-                else (print_failed (); false))
-            else
-                (print_endline "    This package has no postinst script"; true))
-        in
-        if not s then None, ""
-        else Some status, tpath
-    in
+        Some status 
+    with
+        | Unix.Unix_error (c,_,_) -> print_newline (); print_string
+            ("    " ^ Unix.error_message c); print_failed (); None
+        | _ -> print_failed (); None
 
-    let copy_prermsh (status, tpath) =
-        match status with None -> None, "" | Some status ->
-        print_string "    Copying files to the package info location";
-        let unpack_cmd =
-            !program_tar ^ " -xf " ^ tpath ^
-            " -C " ^ Tpm_config.tmp_dir ^ " " ^ Tpm_config.prermsh_name ^
-            " > /dev/zero 2>&1"
-        in
-        let compress_cmd =
-            !program_gzip ^ " -c " ^
-            Tpm_config.tmp_dir ^ "/" ^ Tpm_config.prermsh_name ^
-            " > " ^
-            package_info_location ^ "/" ^ Tpm_config.prermsh_name ^ ".gz"
-        in
+let copy_packaging_scripts_filter spkg status =
+    match status with None -> None | Some status ->
+    print_string "    Copying files to the package info location";
+    let package_info_location =
+        form_target_path (Tpm_config.package_info_location ^ "/" ^ spkg.sn)
+    in
+    match
         try
-            if Sys.command unpack_cmd <> 0
-            then
-                (print_ok (); Some status, tpath)
-            else
-                let pu = Unix.umask 0o022
-                in
-                let status =
-                    if Sys.command compress_cmd <> 0
-                    then
-                        (print_newline (); print_string "    Gzip failed";
-                        print_failed (); None)
-                    else Some status
-                in
-                let _ = Unix.umask pu
-                in
-                print_ok (); status, tpath
+            Some (List.fold_left
+                (fun c s ->
+                    let s = Tpm_config.tmp_dir ^ "/" ^ s
+                    in
+                    if Sys.file_exists (s)
+                    then (c ^ " " ^ s)
+                    else c)
+                ""
+                all_packaging_scripts)
         with
-            | Sys_error msg -> print_newline (); print_string ("    " ^ msg);
-                print_failed (); None, ""
-            | Unix.Unix_error (c,_,_) -> print_newline (); print_string
-                ("    " ^ Unix.error_message c); print_failed (); None, ""
-            | _ -> print_failed (); None, ""
+            | Sys_error msg -> print_newline (); print_string msg; None
+            | _ -> None
+    with
+        | None -> print_failed (); None
+        | Some "" -> print_ok (); Some status
+        | Some pkg_scripts ->
+
+    let install_cmd =
+        !program_install ^ " -m755" ^
+        pkg_scripts ^ " " ^
+        package_info_location ^ "/"
+    in
+    try
+        if Sys.command install_cmd = 0
+        then
+            (print_ok (); Some status)
+        else
+            (print_failed (); None)
+    with
+        | Sys_error msg -> print_newline (); print_string ("    " ^ msg);
+            print_failed (); None
+        | _ -> print_failed (); None
+
+let execute_packaging_script_filter spkg scriptname status =
+    match status with None -> None | Some status ->
+    let script =
+        Tpm_config.package_info_location ^ "/" ^ spkg.sn ^ "/" ^
+        scriptname
+        |> form_target_path
+    in
+    try 
+        if Sys.file_exists script
+        then
+            (* This flushes the standard output *)
+            (print_endline ("    Executing " ^ scriptname);
+            print_string    "                               ";
+            if Sys.command
+                (!program_cd ^ " " ^ !target_system ^ " && " ^ script)
+                = 0
+            then (print_ok (); Some status)
+            else (print_failed (); None))
+        else
+            (print_endline ("    This package has no " ^ scriptname ^ ".");
+            Some status)
+    with
+        | Sys_error msg -> print_endline
+            ("    Executing " ^ scriptname ^ " failed: " ^ msg);
+            print_failed ();
+            None
+        | _ -> print_endline ("    Executing " ^ scriptname ^ " failed");
+            print_failed ();
+            None
+
+let reset_configured_dependent_packages_filter name status =
+    match status with None -> None | Some status ->
+    print_endline "    Resetting dependent packages to state installed";
+    let configured_dep_names =
+        get_dependent_package_names
+            (fun (p,r,s) -> is_configured_of_state s)
+            status
+            name
+    in
+    List.fold_left
+        (fun status n ->
+            match status with None -> None | Some status ->
+            match select_status_tuple_by_name status n with
+                | None -> None
+                | Some (p,r,s) ->
+                    print_endline ("        " ^ string_of_pkg p);
+                    Some (update_status_tuple status (p, r, Installed)))
+        (Some status)
+        configured_dep_names
+    |> (fun s ->
+        print_string "        ";
+        match s with
+            | Some s -> print_ok (); Some s
+            | None -> print_failed (); None)
+
+(* Install a package from a specific repository and mark it with a specific
+ * reason for installing it. *)
+let install_package status repo pkg reason =
+    match static_of_dynamic_pkg pkg with
+        | None -> print_endline "Installation: Invalid package"; None
+        | Some spkg ->
+
+    print_endline ("Installing \"" ^ (string_of_pkg pkg) ^ "\"=" ^
+        (match pkg.v with None -> "?" | Some v -> string_of_version v) ^
+        " (" ^ string_of_pkg_type spkg.st ^ ") " ^
+        " from " ^ (string_of_repository repo));
+
+    let install_mark_change_filter pkg reason (status, excluded_files) =
+        match status with None -> None, [] | Some status ->
+        print_string "    Marking the change in status";
+        let status = unique_insert_status_tuple status (pkg, reason, Installation)
+        in
+        if write_status status |> not then (print_failed (); None, [])
+        else (print_ok (); Some status, excluded_files)
     in
 
-    let acknowledge_change (status, tpath) =
+    let install_commit_changes_filter status =
         match status with None -> None | Some status ->
-        print_string "    Acknowledging the change in status";
-        let status = update_status_tupel status (pkg, reason, Installed)
+        print_string "    Commiting changes to status";
+        let status = update_status_tuple status (pkg, reason, Installed)
         in
         if write_status status
         then (print_ok (); Some status)
@@ -235,16 +231,17 @@ let install_package status repo pkg reason =
     in
     
     Some status
-    |> determine_files_to_exclude pkg_type
-    |> check_for_file_collisions
-    |> tmp_dir
-    |> gain_access
-    |> mark_change
-    |> create_pkg_info_location pkg_name
-    |> install_files pkg
-    |> copy_prermsh
-    |> exec_postinstsh
-    |> acknowledge_change
+    |> create_tmp_dir_filter
+    |> unpack_package_filter repo pkg
+    |> check_for_file_collisions_filter spkg
+    |> install_determine_files_to_exclude_filter spkg
+    |> install_mark_change_filter pkg reason
+    |> unpack_files_filter pkg
+    |> create_pkg_info_location_filter spkg
+    |> copy_packaging_scripts_filter spkg
+    |> execute_packaging_script_filter spkg Tpm_config.postinstsh_name
+    |> reset_configured_dependent_packages_filter spkg.sn
+    |> install_commit_changes_filter
 
 let upgrade_package status repo pkg =
     print_endline ("Upgrade: not supported yet (package \"" ^
@@ -253,17 +250,118 @@ let upgrade_package status repo pkg =
 let install_or_upgrade_package status repo pkg reason =
     match (pkg.t, pkg.n, pkg.v, pkg.a) with
         | (Some t, Some n, Some v, Some a) ->
-            (match select_status_tupel_by_name status n with
+            (match select_status_tuple_by_name status n with
                 | None -> install_package status repo pkg reason
-                | Some (ipkg,_,_) ->
+                | Some (ipkg,preason,pstatus) ->
                     if ipkg.v <> Some v then upgrade_package status repo pkg
-                    else (print_endline ("\"" ^ n ^ "\"=" ^ (string_of_version v) ^
-                        " is already installed."); Some status))
+                    else
+                    match reason with
+                        | Auto -> Some status
+                        | Manual ->
+                            if preason = Manual
+                            then (print_endline
+                                ("\"" ^ n ^ "\"=" ^ (string_of_version v) ^
+                                " is already installed."); Some status)
+                            else (print_string
+                                ("\"" ^ n ^ "\"=" ^ (string_of_version v) ^
+                                " was automatically installed already, " ^
+                                "marking it as manually installed");
+                                let status =
+                                    update_status_tuple_installation_reason
+                                        status n Manual
+                                in
+                                match
+                                    write_status status
+                                with
+                                    | true -> print_ok (); Some status
+                                    | false -> print_failed (); None))
         | _ ->
             print_endline "Installation: Invalid package"; None
 
+let configure_package status name =
+    print_endline ("Configuring package \"" ^ name ^ "\"");
+
+    let configure_check_target_filter status =
+        print_string "    Checking if the target system is \"/\"";
+        match !target_system with
+            | "/" -> print_ok (); Some status
+            | _ -> print_failed (); None
+    in
+    let configure_mark_change_filter name status =
+        match status with None -> (None, None) | Some status ->
+        print_string "    Marking change in status";
+        match select_status_tuple_by_name status name with
+            | None -> print_newline (); print_string
+                ("Configure: Package \"" ^ name ^ "\" is not installed.");
+                print_failed (); (None, None)
+            | Some (p,r,s) when s = Installed ->
+                (let status = update_status_tuple status (p,r,Configuration)
+                in
+                match write_status status with
+                    | true -> print_ok (); (Some status, static_of_dynamic_pkg p)  
+                    | false -> print_failed (); (None, None))
+            | _ -> print_newline (); print_string
+                ("Configure: Package \"" ^ name ^ "\" is not in state installed");
+                print_failed (); (None, None)
+    in
+    let configure_confirm_change_filter name status =
+        match status with None -> None | Some status ->
+        print_string "    Confirming change in status";
+        match select_status_tuple_by_name status name with
+            | None -> print_failed (); None
+            | Some (p,r,s) ->
+                let status =
+                    update_status_tuple status (p, r, Configured)
+                in
+                match write_status status with
+                    | true -> print_ok (); Some status
+                    | false -> print_failed (); None
+    in
+
+    match
+        configure_check_target_filter status
+        |> configure_mark_change_filter name
+    with
+        | (Some status, Some spkg) ->
+            execute_packaging_script_filter spkg
+                Tpm_config.configuresh_name (Some status)
+            |> configure_confirm_change_filter name
+        | _ -> None
+
+let configure_package_if_possible status name =
+    match select_status_tuple_by_name status name with
+        | None -> print_endline ("Configure_if_possible: Unknown package \"" ^
+            name ^ "\""); None
+        | Some (p,r,s) when s = Installed ->
+            (match List.exists
+                (fun n -> not (is_pkg_name_installed status n))
+                p.rdeps
+            with
+                | true -> Some status
+                | false -> match !target_system with
+                    | "/" -> configure_package status name
+                    | _ -> Some status)
+        | _ -> Some status
+
+let configure_all_packages_filter status =
+    match status with None -> None | Some status ->
+    List.fold_left
+        (fun status (p,r,ps) ->
+            match status with None -> None | Some status ->
+            match p.n with
+                | None -> Some status
+                | Some n -> configure_package_if_possible status n)
+        (Some status)
+        (select_status_tuple_by_predicate
+            (fun (_,_,s) -> s = Installed)
+            status)
+
+let configure_all_packages status =
+    configure_all_packages_filter (Some status)
+        
+
 let remove_package status name =
-    match select_status_tupel_by_name status name with
+    match select_status_tuple_by_name status name with
         | None -> print_endline ("Removal: Package \"" ^ name ^
             "\" is not installed"); None
         | Some (pkg, preason, pstate) ->
@@ -301,7 +399,7 @@ let remove_package status name =
     print_ok ();    
     
     print_string "    Marking removal in status";
-    let status = update_status_tupel status (pkg, preason, Removal)
+    let status = update_status_tuple status (pkg, preason, Removal)
     in
     if write_status status |> not then (print_failed (); None)
     else
@@ -446,7 +544,7 @@ let remove_package status name =
     let remove_from_status status =
         match status with None -> None | Some status ->
         print_string "    Removing package from status";
-        let status = delete_status_tupel status (pkg, preason, Removal)
+        let status = delete_status_tuple status (pkg, preason, Removal)
         in
         if write_status status |> not then (print_failed (); None)
         else (print_ok (); Some status)
@@ -473,7 +571,7 @@ let show_policy name =
     in
     match read_status () with None -> false | Some status ->
     let i_pkg =
-        select_status_tupel_by_name status name
+        select_status_tuple_by_name status name
     in
     let string_of_rp (r,p) =
         (match p.v with None -> "???" | Some v -> string_of_version v) ^

@@ -8,6 +8,9 @@ open Repository_search
 open Configuration
 open Installation
 open Status
+open Depres
+
+let ignore_noncritical = ref false
 
 let install_packages names =
     print_target ();
@@ -15,32 +18,25 @@ let install_packages names =
         | None -> false
         | Some cfg ->
     let rps =
-        List.fold_left
-            (fun a name -> match a with None -> None | Some a ->
-                let rps =
-                    find_package_in_all_repos name |>
-                    List.filter (fun rp ->
-                        let (_,p) = rp
-                        in p.Pkg.a = Some cfg.Configuration.a)
-                in
-                match select_version_to_install rps with
-                    | None -> print_endline ("Package \"" ^ name ^
-                        "\" not found for architecture " ^ (string_of_arch cfg.a));
-                        None
-                    | Some rp -> Some (rp::a))
-            (Some [])
-            names
+        find_and_select_packages_in_all_repos cfg names
     in
     match rps with None -> false | Some rps ->
     match read_status () with None -> false | Some status ->
-    if check_installation status true|> not then false
-    else
+    match check_installation status true with
+        | Critical ->
+            print_endline "Critical problems prevent the installation"; false
+        | Non_critical when not !ignore_noncritical ->
+            print_endline "Noncritical problems prevent the installation"; false
+        | Non_critical
+        | No_problem ->
     let status =
         List.fold_left
             (fun s (r,p) -> match s with None -> None | Some s ->
-                install_or_upgrade_package s r p Status.Manual)
+                install_or_upgrade_package s r p Status.Manual
+                |> configure_all_packages_filter)
             (Some status)
             rps
+        |> configure_all_packages_filter
     in
     match status with None -> false | Some _ -> true
 
@@ -50,7 +46,7 @@ let remove_packages names =
     let names =
         List.fold_left
             (fun ns n ->
-                match select_status_tupel_by_name status n with
+                match select_status_tuple_by_name status n with
                     | None -> print_endline
                         ("Package " ^ n ^ " is not installed");
                         ns
@@ -58,8 +54,13 @@ let remove_packages names =
             []
             (List.rev names)
     in
-    if check_installation status true |> not then false
-    else
+    match check_installation status true with
+        | Critical ->
+            print_endline "Critical problems prevent from removing"; false
+        | Non_critical when not !ignore_noncritical ->
+            print_endline "Noncritical problems prevent from removing"; false
+        | Non_critical
+        | No_problem ->
     let status =
         List.fold_left
             (fun s name -> match s with None -> None | Some s ->
@@ -69,22 +70,106 @@ let remove_packages names =
     in
     match status with None -> false | Some _ -> true
 
-let recover_by_removing () =
+let recover_from_dirty_state () =
     print_target ();
+    match read_configuration () with None -> false | Some cfg ->
     match read_status () with None -> false | Some status ->
-    let forcefully_remove_packages status pkgs =
-        List.fold_left
-            (fun status pkg -> match status with None -> None | Some status ->
-                match pkg.n with
-                    | None -> print_endline "Package with no name, aborting";
+    let recover_critical_package_state_filter status (pkg, reason, pstate) =
+        match status with None -> None | Some status ->
+        match pstate with
+            | Installed
+            | Configured -> Some status
+            | _ -> match pkg.n with
+                | None -> print_endline "Package with no name, aborting";
                         None
-                    | Some n -> force_remove status n)
-            (Some status)
-            pkgs
+                | Some name -> force_remove status name
     in
-    get_dirty_packages status false
-    |> forcefully_remove_packages status
-    |> bool_of_option
+    let recover_critical_package_states_filter status =
+        match status with None -> None | Some status ->
+        List.fold_left
+            recover_critical_package_state_filter
+            (Some status)
+            (select_all_status_tuples status)
+    in
+    let remove_duplicate_packages_filter status =
+        let find_duplicate_packages_filter status =
+            match status with None -> (None, [], []) | Some status ->
+            (* Accumulator: (status, processed packages, duplicate packages) *)
+            List.fold_left
+                (fun (status, pps, dps) (p,r,s) ->
+                    match status with None -> (None, [], []) | Some status ->
+                    match
+                        List.exists
+                            (fun pp -> compare_pkgs_by_name p pp = 0)
+                            pps
+                    with
+                        | true ->
+                            (match
+                                List.exists
+                                    (fun dp -> compare_pkgs_by_name p dp = 0)
+                                    dps
+                            with
+                                | true -> (Some status, pps, p::dps)
+                                | false -> (Some status, pps, p::p::dps))
+                        | false -> (Some status, p::pps, dps))
+                (Some status, [], [])
+                (select_all_status_tuples status)
+        in
+        let (status, _, dps) =
+            find_duplicate_packages_filter status
+        in
+        List.fold_left
+            (fun status dp ->
+                match status with None -> None | Some status ->
+                match dp.n with
+                    | None -> print_endline "Package with no name, aborting"; None
+                    | Some n -> force_remove status n)
+            status
+            dps
+    in
+    let compute_missing_packages_filter status =
+        match status with None -> (None, []) | Some status ->
+        (* Accumulator: (status, missing package names) *)
+        List.fold_left
+            (fun (status, mps) (p,r,ps) ->
+                match status with None -> (None, []) | Some status ->
+                List.fold_left
+                    (fun (status, mps) n ->
+                        match status with None -> (None, []) | Some status ->
+                        if not (is_pkg_name_installed status n)
+                        then (Some status, n::mps)
+                        else (Some status, mps))
+                (Some status, mps)
+                p.rdeps)
+            (Some status, [])
+            (select_all_status_tuples status)
+    in
+    let install_missing_packages_filter (status, mpns) =
+        match status with None -> None | Some status ->
+        match find_and_select_packages_in_all_repos cfg mpns with
+            | None -> None
+            | Some mrps ->
+        List.iter
+            (fun (repo, pkg) -> print_endline ("\"" ^ string_of_pkg pkg ^
+                "\" is missing"))
+            mrps;
+        Some status
+    in
+    let check_installation_filter = function
+        None -> false | Some status ->
+        match check_installation status true with
+            | No_problem -> print_endline "Recovery successful"; true
+            | _ -> print_endline "Recovery failed"; false
+    in
+    
+    Some status
+    |> recover_critical_package_states_filter
+    |> remove_duplicate_packages_filter
+    |> compute_missing_packages_filter
+    |> install_missing_packages_filter
+    |> configure_all_packages_filter
+    |> check_installation_filter
+
 
 (* User interface *)
 let version_msg =
@@ -99,21 +184,15 @@ let usage_msg = version_msg
 
 (* Read environment variables *)
 let read_env_vars () =
-    try target_system := Unix.getenv "TPM_TARGET" with _ -> ();
+    try target_system :=
+        let te = Unix.getenv "TPM_TARGET"
+        in if te <> "" then te else !target_system
+    with _ -> ();
     try program_sha512sum := Unix.getenv "TPM_PROGRAM_SHA512SUM" with _ -> ();
     try program_tar := Unix.getenv "TPM_PROGRAM_TAR" with _ -> ();
     try program_cd := Unix.getenv "TPM_PROGRAM_CD" with _ -> ();
-    try program_gzip := Unix.getenv "TPM_PROGRAM_GZIP" with _ -> ()
-
-(* Set TPM_TARGET for the packaging scripts *)
-let put_env_vars () =
-    try
-        Unix.putenv "TPM_TARGET" !target_system
-    with
-        | Unix.Unix_error (c,_,_) -> print_endline ("Can not set \"TPM_TARGET\" " ^
-            "in the processes environment: " ^ Unix.error_message c); exit 1
-        | _ -> print_endline ("Can not set \"TPM_TARGET\" in the processes " ^
-            "environment."); exit 1
+    try program_gzip := Unix.getenv "TPM_PROGRAM_GZIP" with _ -> ();
+    try program_install := Unix.getenv "TPM_PROGRAM_INSTALL" with _ -> ()
 
 (* Commands *)
 let create_desc_type = ref None
@@ -164,9 +243,16 @@ let cmd_show_problems () = show_problems := Some ()
 let recover = ref None
 let cmd_recover () = recover := Some ()
 
+let dependency_graph = ref None
+let cmd_dependency_graph () = dependency_graph := Some ()
+
+let reverse_dependencies = ref None
+let cmd_reverse_dependencies s = reverse_dependencies := Some s
+
 let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
     ("--target", Set_string target_system, "Root of the managed system's filesystem");
+    ("--ignore-noncritical", Set ignore_noncritical, "Ignore noncritical problems");
     ("--create-desc", String cmd_create_desc,
         "Create desc.xml with package type and destdir in the current working " ^
         "directory");
@@ -189,12 +275,17 @@ let cmd_specs = [
         "missing dependencies)");
     ("--recover", Unit cmd_recover, "Recover from a dirty state by deleting all " ^
         "packages that are in a dirty state (always possible due to atomic " ^
-        "write operations to status")
+        "write operations to status");
+    ("--dependency-graph", Unit cmd_dependency_graph, "Print the dependency " ^
+    "graph for the specified packages in the dot format");
+    ("--reverse-dependencies", String cmd_reverse_dependencies, "List the " ^
+        "installed packages that depend on the specified package if it is " ^
+        "installed");
 ]
 
 let anon_args = ref []
 let cmd_anon a =
-    if !install = Some () || !remove = Some ()
+    if !install = Some () || !remove = Some () || !dependency_graph = Some ()
     then anon_args := a::!anon_args
     else(print_endline ("Invalid option \"" ^ a ^ "\""); exit 2)
 
@@ -215,7 +306,9 @@ let check_cmdline () =
         PolyUnitOption !remove;
         PolyUnitOption !list_installed;
         PolyUnitOption !show_problems;
-        PolyUnitOption !recover
+        PolyUnitOption !recover;
+        PolyUnitOption !dependency_graph;
+        PolyStringOption !reverse_dependencies;
     ]
     in
     match
@@ -237,7 +330,6 @@ let main () =
     read_env_vars ();
     parse cmd_specs cmd_anon usage_msg;
     check_cmdline ();
-    put_env_vars ();
     match !set_name with
         Some n -> if set_package_name n then exit 0 else exit 1
     | None -> match !set_version with
@@ -273,7 +365,13 @@ let main () =
     | None -> match !show_problems with
         | Some () -> if show_problems_with_installation () then exit 0 else exit 1
     | None -> match !recover with
-        | Some () -> if recover_by_removing () then exit 0 else exit 1
+        | Some () -> if recover_from_dirty_state () then exit 0 else exit 1
+    | None -> match !dependency_graph with
+        | Some () -> if !anon_args = []
+            then (print_endline "--dependency-graph requires an argument"; exit 2)
+            else (try print_dependency_graph !anon_args; exit 0 with _ -> exit 1)
+    | None -> match !reverse_dependencies with
+        | Some n -> (try print_reverse_dependencies n; exit 0 with _ -> exit 1)
     | None ->
         print_endline "Something went wrong (you should not see this): no command specified (!?)"
 

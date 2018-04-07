@@ -159,21 +159,19 @@ let create_packed_form () =
             !program_tar ^ " -cpI " ^  !program_gzip ^
             " -f ../" ^ Tpm_config.destdir_name ^ ".tar.gz *"
         in
-        let pack_package_cmd =
-            !program_tar ^ " -cf " ^ archivename ^ " " ^
-            Tpm_config.desc_file_name ^ " " ^
-            Tpm_config.destdir_name ^ ".tar.gz" ^
-            (if Sys.file_exists Tpm_config.postinstsh_name
-                then " " ^ Tpm_config.postinstsh_name
-                else "") ^
-            (if Sys.file_exists Tpm_config.prermsh_name
-                then " " ^ Tpm_config.prermsh_name
-                else "") ^
-            (if Sys.file_exists Tpm_config.preupdatesh_name
-                then " " ^ Tpm_config.preupdatesh_name
-                else "")
-        in
         try
+            let pack_package_cmd =
+                !program_tar ^ " -cf " ^ archivename ^ " " ^
+                Tpm_config.desc_file_name ^ " " ^
+                Tpm_config.destdir_name ^ ".tar.gz" ^
+                    List.fold_left
+                        (fun a s ->
+                            (if Sys.file_exists s
+                                then a ^ " " ^ s
+                                else a))
+                        ""
+                        all_packaging_scripts
+            in
             if Sys.command pack_destdir_cmd <> 0
             then failwith "Compressing destdir failed"
             else

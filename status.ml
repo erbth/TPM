@@ -2,10 +2,11 @@ open Xml
 open Util
 open Pkg
 
-type installation_status = Installation | Installed | Removal | Upgrade
+type installation_status =  Installation | Installed | Configuration |
+                            Configured | Removal | Upgrade
 type installation_reason = Auto | Manual
-type status_tupel = pkg * installation_reason * installation_status
-type status = status_tupel list
+type status_tuple = pkg * installation_reason * installation_status
+type status = (string, status_tuple) Hashtbl.t
 
 let installation_reason_of_string = function
     | "auto" -> Some Auto
@@ -19,6 +20,8 @@ let string_of_installation_reason = function
 let installation_status_of_string = function
     | "installation" -> Some Installation
     | "installed" -> Some Installed
+    | "configuration" -> Some Configuration
+    | "configured" -> Some Configured
     | "removal" -> Some Removal
     | "upgrade" -> Some Upgrade
     | _ -> None
@@ -26,15 +29,27 @@ let installation_status_of_string = function
 let string_of_installation_status = function
     | Installation -> "installation"
     | Installed -> "installed"
+    | Configuration -> "configuration"
+    | Configured -> "configured"
     | Removal -> "removal"
     | Upgrade -> "upgrade"
 
-type dynamic_status_tupel =
+let is_installed_of_state = function
+    | Installed -> true
+    | Configuration -> true
+    | Configured -> true
+    | _ -> false
+
+let is_configured_of_state = function
+    | Configured -> true
+    | _ -> false
+
+type dynamic_status_tuple =
     pkg option *
     installation_reason option *
     installation_status option
 
-let dynamic_to_static_status_tupel = function
+let dynamic_to_static_status_tuple = function
     | (Some p, Some r, Some s) -> Some (p, r, s)
     | _ -> None
 
@@ -68,7 +83,7 @@ let pot_create_status () =
             false
 
 let read_status () =
-    let process_tupel_element v (pkg, reason, status) = function
+    let process_tuple_element v (pkg, reason, status) = function
         | Element ("reason",_,[PCData r]) ->
             (match installation_reason_of_string r with
                 | None -> print_endline ("Status: Invalid reason \"" ^ r ^
@@ -88,33 +103,39 @@ let read_status () =
                 | None -> print_endline "Status: Invalid package"; None
                 | Some pkg -> Some (Some pkg, reason, status))
         | PCData t ->
-            print_endline ("Status: Invalid text in tupel: \"" ^ t ^ "\"");
+            print_endline ("Status: Invalid text in tuple: \"" ^ t ^ "\"");
             None
     in
     let process_toplevel_element v = function
-        | Element ("tupel",_,cs) ->
+        | Element ("tuple",_,cs) ->
             (let dst = List.fold_left
                 (fun dst e -> match dst with None -> None | Some dst ->
-                    process_tupel_element v dst e)
+                    process_tuple_element v dst e)
                 (Some (None, None, None))
                 cs
             in
             match dst with None -> None | Some dst ->
-            let st = dynamic_to_static_status_tupel dst
+            let st = dynamic_to_static_status_tuple dst
             in
             match st with
-                | None -> print_endline "Status: Information missing in tupel"; None
+                | None -> print_endline "Status: Information missing in tuple"; None
                 | Some st -> Some st)
         | Element (v,_,_) | PCData v ->
             print_endline ("Status: Invalid toplevel element: \"" ^ v ^ "\"");
             None
     in
     let process_toplevel_elements v elems =
+        let s = Hashtbl.create ~random:true 1000
+        in
         List.fold_left
-            (fun a e -> match a with None -> None | Some a ->
-                match process_toplevel_element v e with None -> None | Some t ->
-                    Some (t::a))
-            (Some [])
+            (fun s e -> match s with None -> None | Some s ->
+                match process_toplevel_element v e with
+                    | None -> None
+                    | Some t ->
+                        let (p,_,_) = t
+                        in
+                        Hashtbl.add s (unopt p.n) t; Some s)
+            (Some s)
             (List.rev elems)
     in
     let sp = form_target_path Tpm_config.status_file_path
@@ -142,10 +163,10 @@ let read_status () =
                 ^ "\""); None
 
 let write_status s =
-    let xml_of_tupel (pkg, r, s) =
+    let xml_of_tuple (pkg, r, s) =
         match xml_of_pkg pkg with
             | None -> None
-            | Some xpkg -> Some (Element ("tupel", [], [
+            | Some xpkg -> Some (Element ("tuple", [], [
                     xpkg;
 
                     Element ("reason", [],
@@ -155,17 +176,17 @@ let write_status s =
                         [PCData (string_of_installation_status s)])
                 ]))
     in
-    let xtupels =
-        List.fold_left
-            (fun a t -> match a with None -> None | Some a ->
-                match xml_of_tupel t with None -> None | Some x -> Some (x::a))
+    let xtuples =
+        Hashtbl.fold
+            (fun n t a -> match a with None -> None | Some a ->
+                match xml_of_tuple t with None -> None | Some x -> Some (x::a))
+            s
             (Some [])
-            (List.rev s)
     in
-    match xtupels with
+    match xtuples with
         | None -> (print_endline "Status: Invalid package"; false)
-        | Some xtupels ->
-            let x = Element ("status", [("file_version", "1.0")], xtupels)
+        | Some xtuples ->
+            let x = Element ("status", [("file_version", "1.0")], xtuples)
             in
             let sp = form_target_path Tpm_config.status_file_path
             in
@@ -183,29 +204,72 @@ let write_status s =
                     "Status: Could not write to \"" ^ sp ^ "\"");
                     false
 
-let compare_tupels (p1,_,_) (p2,_,_) = match (p1.n, p2.n) with
-        | (Some n1, Some n2) -> compare_names n1 n2
-        | _ -> failwith "Status: Uncomparable tupel"
+let compare_status_tuples (p1,_,_) (p2,_,_) =
+    compare_pkgs_by_name p1 p2
 
-let rec select_status_tupel_by_name status name =
-    match status with
-        | [] -> None
-        | dt :: sts ->
-            if  compare_tupels dt (
-                    {empty_pkg with n = Some name},
-                    (),
-                    ()) = 0
-            then Some dt
-            else select_status_tupel_by_name sts name
-
-let unique_insert_status_tupel status tupel =
-    sorted_unique_insert compare_tupels status tupel
-
-let update_status_tupel status tupel =
-    List.map (fun t -> if (compare_tupels t tupel) = 0 then tupel else t) status
-
-let delete_status_tupel status tupel =
-    List.fold_left
-        (fun a t -> if (compare_tupels t tupel) = 0 then a else t::a)
+let select_all_status_tuples status =
+    Hashtbl.fold
+        (fun n t a -> t::a)
+        status
         []
-        (List.rev status)
+
+let rec select_status_tuple_by_name status name =
+    Hashtbl.find_opt status name
+
+let select_status_tuple_by_pkg status pkg =
+    match pkg.n with
+        | None -> None
+        | Some name -> select_status_tuple_by_name status name
+
+let select_status_tuple_by_predicate p status =
+    Hashtbl.fold
+        (fun _ t l -> if p t then t::l else l)
+        status
+        []
+
+let unique_insert_status_tuple status (p,r,ps) =
+    match p.n with
+        | None -> status
+        | Some name ->
+            match Hashtbl.mem status name with
+                | true -> status
+                | false -> Hashtbl.add status name (p,r,ps); status
+
+let update_status_tuple status (p,r,ps) =
+    match p.n with
+        | None -> status
+        | Some name ->
+            match Hashtbl.mem status name with
+                | false -> status
+                | true -> Hashtbl.replace status name (p,r,ps); status
+
+let update_status_tuple_installation_reason status name reason =
+    match select_status_tuple_by_name status name with
+        | Some (p, r, s) -> update_status_tuple status (p, reason, s)
+        | None -> status
+
+
+let delete_status_tuple status (p,_,_) =
+    match p.n with
+        | None -> status
+        | Some name -> Hashtbl.remove status name; status
+
+let is_pkg_name_installed status name =
+    match select_status_tuple_by_name status name with
+        | Some (_,_,s) -> is_installed_of_state s
+        | _ -> false
+
+let is_pkg_installed status pkg =
+    match pkg.n with
+        | None -> false
+        | Some n -> is_pkg_name_installed status n
+
+let is_pkg_name_configured status name =
+    match select_status_tuple_by_name status name with
+        | Some (_,_,s) -> is_configured_of_state s
+        | _ -> false
+
+let is_pkg_configured status pkg =
+    match pkg.n with
+        | None -> false
+        | Some n -> is_pkg_name_configured status n

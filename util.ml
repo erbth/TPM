@@ -3,6 +3,11 @@ let program_sha512sum = ref Tpm_config.default_program_sha512sum
 let program_tar = ref Tpm_config.default_program_tar
 let program_cd = ref Tpm_config.default_program_cd
 let program_gzip = ref Tpm_config.default_program_gzip
+let program_install = ref Tpm_config.default_program_install
+
+(* A Critical error shall never be catched *)
+exception Critical_error of string
+exception Gp_exception
 
 let print_target () =
     print_endline ("Runtime system is at \"" ^ !target_system ^ "\"" ^
@@ -24,6 +29,10 @@ let arch_of_string = function
 let string_of_arch = function
     | I386 -> "i386"
     | Amd64 -> "amd64"
+
+let string_of_opt_arch = function
+    | None -> "???"
+    | Some a -> string_of_arch a
 
 type version = (int * int * int)
 let version_of_string s =
@@ -56,6 +65,10 @@ let string_of_version (major,minor,revision) =
 let version_bigger (maj1,min1,rev1) (maj2,min2,rev2) =
     maj1 > maj2 || maj1 = maj2 && min1 > min2 ||
     maj1 = maj2 && min1 = min2 && rev1 > rev2
+
+let unopt = function
+    | None -> failwith "unopt applied to None"
+    | Some v -> v
 
 let add_xml_descriptor = (^) "<?xml version=\"1.0\"?>\n"
 let xml_to_string_with_desc s = (Xml.to_string_fmt s |> add_xml_descriptor) ^ "\n"
@@ -176,3 +189,52 @@ let file_status n =
             | _ -> Read_error
 
 let bool_of_option o = match o with None -> false | Some _ -> true
+
+let create_or_clean_tmp_dir () =
+    try
+        match file_status Tpm_config.tmp_dir with
+            | Non_existent -> create_tmp_dir ()
+            | Directory -> (match rmdir_r Tpm_config.tmp_dir with
+                | true -> create_tmp_dir ()
+                | false -> false)
+            | Other_file -> print_endline ("The supposed temporary directory \"" ^
+                Tpm_config.tmp_dir ^ "\" exists already as other file.\""); false
+            | Read_error -> print_endline ("Could not check if the temporary " ^
+                "directory \"" ^ Tpm_config.tmp_dir ^ "\" exists already"); false
+    with
+        Sys_error msg -> print_endline ("Could not create or clean temprary " ^
+            "directory \"" ^ Tpm_config.tmp_dir ^ "\": " ^ msg); false
+
+
+type problem = Non_critical | Critical | No_problem
+
+(* The following to functions set the respective problem state if the
+ * 'second parameter' is true *)
+let check_critical is = function
+    | false -> is
+    | true -> match is with
+        | No_problem
+        | Non_critical
+        | Critical -> Critical
+
+
+let check_non_critical is = function
+    | false -> is
+    | true -> match is with
+        | No_problem
+        | Non_critical -> Non_critical
+        | Critical -> Critical
+
+let all_packaging_scripts = [
+    Tpm_config.postinstsh_name;
+    Tpm_config.configuresh_name;
+    Tpm_config.preupdatesh_name;
+    Tpm_config.postupdatesh_name;
+    Tpm_config.prermsh_name
+]
+
+let hashtbl_keys ht =
+    Hashtbl.fold
+        (fun k _ l -> k::l)
+        ht
+        []

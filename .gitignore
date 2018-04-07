@@ -2,7 +2,8 @@
 *.swp
 
 # Object code directory
-/bin
+/_build
+/tpm.native
 
 # Archive for distribution
 /tpm-*.tar.xz

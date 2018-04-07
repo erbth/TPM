@@ -20,10 +20,25 @@ let read_package path =
             ("Packed: Could not read the package: " ^ msg); None
         | _ -> print_endline ("Packed: Could not read the package"); None
 
-let unpack_files repo pkg exclude_files =
+let unpack_packed_form repo pkg =
     if not (create_tmp_dir ()) then false
     else
     match provide_transport_shape repo pkg with None -> false | Some path ->
+    let unpack_package_cmd = !program_tar ^ " -xf " ^ path ^
+        " -C " ^ Tpm_config.tmp_dir
+    in
+    try
+        if (Sys.command unpack_package_cmd) <> 0
+        then (print_endline "Packed: Could not unpack the package (tar failed)";
+            false)
+        else
+            true
+    with
+        | Sys_error msg -> print_endline
+            ("Packed: Failed to unpack the package: " ^ msg); false
+        | _ -> print_endline "Packed: Failed to unpack the package"; false
+
+let unpack_files_from_tmp pkg exclude_files =
     let str_exclude_files =
         List.map
             (fun fn ->
@@ -38,19 +53,12 @@ let unpack_files repo pkg exclude_files =
         |>
         String.concat " "
     in
-    let unpack_package_cmd = !program_tar ^ " -xf " ^ path ^
-        " -C " ^ Tpm_config.tmp_dir ^ " " ^ Tpm_config.destdir_name ^ ".tar.gz"
-    in
     let install_files_cmd = !program_tar ^
         " -xpI " ^ !program_gzip ^
         " -f " ^ Tpm_config.tmp_dir ^ "/" ^ Tpm_config.destdir_name ^ ".tar.gz" ^
         " -C " ^ !target_system ^ " " ^ str_exclude_files
     in
     try
-        if (Sys.command unpack_package_cmd) <> 0
-        then (print_endline "Packed: Could not unpack the package (tar failed)";
-            false)
-        else
         if (Sys.command install_files_cmd) = 0 then true
         else
             (print_endline
