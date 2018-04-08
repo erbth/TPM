@@ -3,18 +3,17 @@ PKGS := unix str xml-light
 PREFIX ?= /usr/local
 DESTDIR ?= /
 
-TPM_VERSION := 1.0.1
+TPM_VERSION := 1.0.2
 
 tpm.native: FORCE
 	ocamlbuild $(PKGS:%=-pkg %) tpm.native
 
 .PHONY: install uninstall
-install: tpm.native
+install: tpm.native README
 	install -dm755 $(DESTDIR)/$(PREFIX)/bin
 	install -m755 $< $(DESTDIR)/$(PREFIX)/bin/tpm
-
-uninstall:
-	rm $(DESTDIR)/$(PREFIX)/bin/tpm
+	install -dm755 $(DESTDIR)/$(PREFIX)/share/doc/tpm
+	install -m644 README $(DESTDIR)/$(PREFIX)/share/doc/tpm/
 
 .PHONY: dist
 dist:

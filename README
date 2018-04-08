@@ -1,0 +1,7 @@
+TSClient LEGACY Package Manager (TPM)
+
+A package manager for the TSClient LEGACY ThinClient operating system.
+It is entirely written in OCaml and uses GNU Tar, GNU Gzip and tools
+from GNU Coreutils or similar programs.
+
+8 April, 2018, Thomas Erbesdobler <t.erbesdobler@gmx.de>

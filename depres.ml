@@ -30,6 +30,40 @@ and add_nodes_to_dependency_graph cfg g repo_pkg_reason_list =
 
 let create_dependency_graph () = Hashtbl.create ~random:true 1000
 
+let dependency_graph_of_repo_package_reason_list cfg rprs =
+    let g = create_dependency_graph ()
+    in
+    add_nodes_to_dependency_graph cfg g rprs;
+    g
+
+let derive_installation_order_from_graph g rp_sources =
+    let visited_set = Hashtbl.create 100
+    in
+    let rec process_child l (repo, pkg) =
+            match pkg.n with
+                | None -> print_endline "Depres: Package with no name";
+                    raise Gp_exception
+                | Some name ->
+                    if not (Hashtbl.mem visited_set name)
+                    then visit_node name (repo, pkg) @ l
+                    else l
+    and visit_node name (repo, pkg) =
+        match Hashtbl.find_opt g pkg with
+            | None -> print_endline "Depres: Package not in graph";
+                raise Gp_exception
+            | Some (reason, rdep_repo_pkg_list) ->
+                Hashtbl.add visited_set name ();
+                List.fold_left
+                    process_child
+                    [(repo, pkg, reason)]
+                    rdep_repo_pkg_list
+
+    in
+    List.fold_left
+        process_child
+        []
+        rp_sources
+
 let print_dependency_graph names =
     print_target ();
     match read_configuration () with None -> raise Gp_exception | Some cfg ->

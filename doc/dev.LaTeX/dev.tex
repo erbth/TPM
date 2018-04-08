@@ -128,7 +128,7 @@
 	\begin{tabularx}{\textwidth}{lX}
 		\texttt{-{}-target} & Root of the system which is managed; This can be specified with the environment variable \variable{TPM\_TARGET}, however \texttt{-{}-target} precedes. \\
 		
-		\texttt{-{}-ignore-dependencies} & Do not respect the package's dependencies during installation, removal or upgrade. \\
+		\texttt{-{}-ignore-dependencies} & Do not respect the package's dependencies during installation, removal or upgrade \\
 		
 		\texttt{-{}-ignore-noncritical} & Ignore non critical problems \\
 	\end{tabularx}
@@ -171,7 +171,7 @@
 		
 		\texttt{-{}-guess-rdependencies} & Guess the package's runtime dependencies from destdir; This does not remove dependencies. However, this does not make sense without a solid package base that includes all used libraries. \\
 		
-		\green{\texttt{-{}-add-rdependency ,<name>}} & Add the runtime dependency <name> \\
+		\green{\texttt{-{}-add-rdependency <name>}} & Add the runtime dependency <name> \\
 		
 		\green{\texttt{-{}-remove-rdependencies}} & Remove all runtime dependencies \\
 		

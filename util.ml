@@ -67,7 +67,7 @@ let version_bigger (maj1,min1,rev1) (maj2,min2,rev2) =
     maj1 = maj2 && min1 = min2 && rev1 > rev2
 
 let unopt = function
-    | None -> failwith "unopt applied to None"
+    | None -> raise (Critical_error "unopt applied to None")
     | Some v -> v
 
 let add_xml_descriptor = (^) "<?xml version=\"1.0\"?>\n"

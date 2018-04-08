@@ -343,6 +343,14 @@ let configure_package_if_possible status name =
                     | _ -> Some status)
         | _ -> Some status
 
+let configure_packages_if_possible_filter names status =
+    List.fold_left
+        (fun status n ->
+            match status with None -> None | Some status ->
+            configure_package_if_possible status n)
+        status
+        names
+
 let configure_all_packages_filter status =
     match status with None -> None | Some status ->
     List.fold_left

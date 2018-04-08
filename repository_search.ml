@@ -77,4 +77,4 @@ let find_and_select_packages_in_all_repos (cfg:configuration) names =
                         None
                     | Some rp -> Some (rp::a))
             (Some [])
-            names
+            (List.rev names)

@@ -11,38 +11,82 @@ open Status
 open Depres
 
 let ignore_noncritical = ref false
+let ignore_dependencies  = ref false
 
-let install_packages names =
-    print_target ();
+let install_packages_filter ignore_noncritical ignore_deps names status =
+    match status with None -> None | Some status ->
     match read_configuration () with
-        | None -> false
+        | None -> None
         | Some cfg ->
     let rps =
         find_and_select_packages_in_all_repos cfg names
     in
-    match rps with None -> false | Some rps ->
-    match read_status () with None -> false | Some status ->
+    match rps with None -> None | Some rps ->
     match check_installation status true with
         | Critical ->
-            print_endline "Critical problems prevent the installation"; false
-        | Non_critical when not !ignore_noncritical ->
-            print_endline "Noncritical problems prevent the installation"; false
+            print_endline "Critical problems prevent the installation"; None
+        | Non_critical when not ignore_noncritical ->
+            print_endline "Noncritical problems prevent the installation"; None
         | Non_critical
         | No_problem ->
-    let status =
-        List.fold_left
-            (fun s (r,p) -> match s with None -> None | Some s ->
-                install_or_upgrade_package s r p Status.Manual
-                |> configure_all_packages_filter)
-            (Some status)
-            rps
-        |> configure_all_packages_filter
-    in
-    match status with None -> false | Some _ -> true
+            let rprs = List.map (fun (r, p) -> (r, p, Manual)) rps
+            in
+            let remove_configured_pkgs u_pkgs status =
+                match status with None -> (None, []) | Some status->
+                List.fold_left
+                    (fun (status, l) n ->
+                        match status with None -> (None, []) | Some status ->
+                        if is_pkg_name_configured status n
+                        then (Some status, l)
+                        else (Some status, n::l))
+                    (Some status, [])
+                    u_pkgs
+            in
+            let unconfigured_pkgs =
+                select_status_tuple_by_predicate
+                    (fun (_,_,s) -> s = Installed)
+                    status
+                |> List.map (fun (p,_,_) -> unopt p.n)
+            in
+            try
+                let rprs =
+                    if not ignore_deps
+                    then
+                        let g =
+                            dependency_graph_of_repo_package_reason_list
+                                cfg
+                                rprs
+                        in
+                        derive_installation_order_from_graph g rps
+                    else rprs
+                in
+                List.fold_left
+                    (fun (s, unconfigured_pkgs) (r,p,ir) ->
+                        match s with None -> (None, []) | Some s ->
+                        install_or_upgrade_package s r p ir
+                        |> configure_packages_if_possible_filter unconfigured_pkgs
+                        |> remove_configured_pkgs unconfigured_pkgs)
+                    (Some status, unconfigured_pkgs)
+                    rprs
+                |> fst
+            with
+                Gp_exception -> None
 
-let remove_packages names =
-    print_target();
-    match read_status () with None -> false | Some status ->
+let install_packages_ui names =
+    print_target ();
+    read_status ()
+    |> install_packages_filter !ignore_noncritical !ignore_dependencies names
+    |> bool_of_option
+
+let remove_packages_filter ignore_noncritical ignore_deps names status =
+    match status with None -> None | Some status ->
+    match check_installation status true with
+        | Critical ->
+            print_endline "Critical problems prevent from removing"; None
+        | Non_critical when not ignore_noncritical ->
+            print_endline "Noncritical problems prevent from removing"; None
+        | Non_critical
+        | No_problem ->
     let names =
         List.fold_left
             (fun ns n ->
@@ -52,23 +96,20 @@ let remove_packages names =
                         ns
                     | Some _ -> n::ns)
             []
-            (List.rev names)
+            names
+        |> List.rev
     in
-    match check_installation status true with
-        | Critical ->
-            print_endline "Critical problems prevent from removing"; false
-        | Non_critical when not !ignore_noncritical ->
-            print_endline "Noncritical problems prevent from removing"; false
-        | Non_critical
-        | No_problem ->
-    let status =
-        List.fold_left
-            (fun s name -> match s with None -> None | Some s ->
-                remove_package s name)
-            (Some status)
-            (List.rev names)
-    in
-    match status with None -> false | Some _ -> true
+    List.fold_left
+        (fun s name -> match s with None -> None | Some s ->
+            remove_package s name)
+        (Some status)
+        names
+
+let remove_packages_ui names =
+    print_target();
+    read_status ()
+    |> remove_packages_filter !ignore_noncritical !ignore_dependencies names
+    |> bool_of_option
 
 let recover_from_dirty_state () =
     print_target ();
@@ -145,18 +186,12 @@ let recover_from_dirty_state () =
             (select_all_status_tuples status)
     in
     let install_missing_packages_filter (status, mpns) =
-        match status with None -> None | Some status ->
-        match find_and_select_packages_in_all_repos cfg mpns with
-            | None -> None
-            | Some mrps ->
-        List.iter
-            (fun (repo, pkg) -> print_endline ("\"" ^ string_of_pkg pkg ^
-                "\" is missing"))
-            mrps;
-        Some status
+        install_packages_filter true false mpns status
     in
     let check_installation_filter = function
         None -> false | Some status ->
+        print_newline ();
+        print_endline "--- Checking the installation after the recovery ---";
         match check_installation status true with
             | No_problem -> print_endline "Recovery successful"; true
             | _ -> print_endline "Recovery failed"; false
@@ -253,6 +288,8 @@ let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
     ("--target", Set_string target_system, "Root of the managed system's filesystem");
     ("--ignore-noncritical", Set ignore_noncritical, "Ignore noncritical problems");
+    ("--ignore-dependencies", Set ignore_dependencies, "Do not respect the " ^
+        "package's dependencies during installation, removal or upgrade");
     ("--create-desc", String cmd_create_desc,
         "Create desc.xml with package type and destdir in the current working " ^
         "directory");
@@ -286,7 +323,7 @@ let cmd_specs = [
 let anon_args = ref []
 let cmd_anon a =
     if !install = Some () || !remove = Some () || !dependency_graph = Some ()
-    then anon_args := a::!anon_args
+    then anon_args := (a::(!anon_args |> List.rev)) |> List.rev
     else(print_endline ("Invalid option \"" ^ a ^ "\""); exit 2)
 
 let check_cmdline () =
@@ -353,13 +390,13 @@ let main () =
     | None -> match !install with
         Some () -> if !anon_args = []
             then (print_endline "--install requires an argument"; exit 2)
-            else if install_packages !anon_args then exit 0 else exit 1
+            else if install_packages_ui !anon_args then exit 0 else exit 1
     | None -> match !policy with
         | Some n -> if show_policy n then exit 0 else exit 1
     | None -> match !remove with
         Some () -> if !anon_args = []
             then (print_endline "--remove requires an argument"; exit 2)
-            else if remove_packages !anon_args then exit 0 else exit 1
+            else if remove_packages_ui !anon_args then exit 0 else exit 1
     | None -> match !list_installed with
         | Some () -> if list_installed_packages () then exit 0 else exit 1
     | None -> match !show_problems with
