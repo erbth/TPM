@@ -18,7 +18,7 @@ install: tpm.native README
 .PHONY: dist
 dist:
 	mkdir tpm-$(TPM_VERSION) && \
-	cp -a *.ml *.mli Makefile .merlin doc tpm-$(TPM_VERSION) && \
+	cp -a *.ml *.mli Makefile .merlin doc README tpm-$(TPM_VERSION) && \
 	tar -cJf tpm-$(TPM_VERSION).tar.xz tpm-$(TPM_VERSION) && \
 	rm -rf tpm-$(TPM_VERSION)
 

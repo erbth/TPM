@@ -63,6 +63,9 @@ let install_packages_filter ignore_noncritical ignore_deps names status =
                 List.fold_left
                     (fun (s, unconfigured_pkgs) (r,p,ir) ->
                         match s with None -> (None, []) | Some s ->
+                        let unconfigured_pkgs =
+                            unconfigured_pkgs @ [unopt p.n]
+                        in
                         install_or_upgrade_package s r p ir
                         |> configure_packages_if_possible_filter unconfigured_pkgs
                         |> remove_configured_pkgs unconfigured_pkgs)
