@@ -53,7 +53,8 @@ let read_configuration () =
         match parse_file cfile with
             | Element ("tpm",attrs,cs) ->
                 (match List.assoc_opt "file_version" attrs with
-                    | Some "1.0" -> process_elements cs
+                    | Some v when v = Tpm_config.config_file_version ->
+                        process_elements cs
                     | Some v -> print_endline ("Config file: Invalid version: " ^ v); None
                     | _ -> print_endline "Config file: Version missing"; None)
             | _ -> print_endline "Config file: Invalid root element"; None

@@ -2,44 +2,54 @@ open Util
 open Pkg
 open Repository
 
-let read_package path =
+let read_package repo name version arch =
     if not (create_tmp_dir ()) then None
     else
-    let cmd = !program_tar ^ " -xf " ^ path ^
-        " -C " ^ Tpm_config.tmp_dir ^ " " ^ Tpm_config.desc_file_name
+    match provide_transport_shape repo name version arch with
+        | None -> None
+        | Some path ->
+    let unpack_args =
+        [|!program_tar; "-xf"; path;
+        "-C"; Tpm_config.tmp_dir; Tpm_config.desc_file_name|]
     in
     try
-        if (Sys.command cmd) <> 0
-        then (print_endline "Packed: Could not unpack the package (tar failed)";
-            None)
-        else
-        (Xml.parse_file (Tpm_config.tmp_dir ^ "/" ^ Tpm_config.desc_file_name)
-            |> pkg_of_xml)
+        match run_program unpack_args with
+            | (_, WEXITED 0) ->
+                Xml.parse_file
+                    (Tpm_config.tmp_dir ^ "/" ^ Tpm_config.desc_file_name)
+                |> pkg_of_xml
+            | _ -> print_endline
+                "Packed: Could not unpack the package (tar failed)";
+                None
     with
-        | Sys_error msg -> print_endline
-            ("Packed: Could not read the package: " ^ msg); None
+        | Unix.Unix_error (c, _, _) -> print_endline
+            ("Packed: Could not read the package: " ^ Unix.error_message c);
+            None
         | _ -> print_endline ("Packed: Could not read the package"); None
 
-let unpack_packed_form repo pkg =
+let unpack_packed_shape repo name version arch =
     if not (create_tmp_dir ()) then false
     else
-    match provide_transport_shape repo pkg with None -> false | Some path ->
-    let unpack_package_cmd = !program_tar ^ " -xf " ^ path ^
-        " -C " ^ Tpm_config.tmp_dir
+    match provide_transport_shape repo name version arch with
+        | None -> false
+        | Some path ->
+    let unpack_package_args =
+        [|!program_tar; "-xf"; path; "-C"; Tpm_config.tmp_dir|]
     in
     try
-        if (Sys.command unpack_package_cmd) <> 0
-        then (print_endline "Packed: Could not unpack the package (tar failed)";
-            false)
-        else
-            true
+        match run_program unpack_package_args with
+            | (_, WEXITED 0) -> true
+            | _ -> print_endline
+                "Packed: Could not unpack the package (tar failed)";
+                false
     with
-        | Sys_error msg -> print_endline
-            ("Packed: Failed to unpack the package: " ^ msg); false
+        | Unix.Unix_error (c, _, _) -> print_endline
+            ("Packed: Failed to unpack the package: " ^ Unix.error_message c);
+            false
         | _ -> print_endline "Packed: Failed to unpack the package"; false
 
-let unpack_files_from_tmp pkg exclude_files =
-    let str_exclude_files =
+let unpack_files_to spkg destination exclude_files status =
+    let exclude_files =
         List.map
             (fun fn ->
                 let fn =
@@ -51,15 +61,25 @@ let unpack_files_from_tmp pkg exclude_files =
                 "--exclude='" ^ fn ^ "'")
             exclude_files
         |>
-        String.concat " "
+        Array.of_list
     in
-    let install_files_cmd = !program_tar ^
-        " -xpI " ^ !program_gzip ^
-        " -f " ^ Tpm_config.tmp_dir ^ "/" ^ Tpm_config.destdir_name ^ ".tar.gz" ^
-        " -C " ^ !target_system ^ " " ^ str_exclude_files
+    let unpack_files_args =
+        Array.append
+            [|!program_tar;
+            "-xpI"; !program_gzip;
+            "-f"; Tpm_config.tmp_dir ^ "/" ^ Tpm_config.destdir_name ^ ".tar.gz";
+            "-C"; destination|]
+            exclude_files
     in
     try
-        if (Sys.command install_files_cmd) = 0 then true
+        if
+            try
+                match run_program unpack_files_args with
+                    | (_, WEXITED 0) -> true
+                    | _ -> false
+            with
+                _ -> false
+        then true
         else
             (print_endline
                 "Packed: Could not install the package's files (tar failed)";
@@ -68,10 +88,3 @@ let unpack_files_from_tmp pkg exclude_files =
         | Sys_error msg -> print_endline
             ("Packed: Could not install the package's files: " ^ msg); false
         | _ -> print_endline ("Packed: Could not install the package's files"); false
-
-let select_version_to_install :
-    (repository * pkg) list -> (repository * pkg) option =
-    List.fold_left
-        (fun a rp -> match a with None -> Some rp | Some a ->
-            if pkg_newer (snd rp) (snd a) then Some rp else Some a)
-        None

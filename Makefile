@@ -3,7 +3,7 @@ PKGS := unix str xml-light
 PREFIX ?= /usr/local
 DESTDIR ?= /
 
-TPM_VERSION := 1.0.2
+TPM_VERSION := 1.0.3
 
 tpm.native: FORCE
 	ocamlbuild $(PKGS:%=-pkg %) tpm.native

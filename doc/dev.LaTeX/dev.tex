@@ -96,9 +96,11 @@
 		
 		\green{\texttt{-{}-policy <name>}} & Show the installed and available versions of <name> \\
 		
-		\texttt{-{}-mark-auto <name1>, \dots} & Mark the specified packages as automatically installed \\
+		\texttt{-{}-show-version <name>} & Print a package's version number or `\texttt{-{}-{}-}' if it is not installed; This operation is intended to automatically query for installed packages. \\
 		
-		\texttt{-{}-mark-manual <name1>, \dots} & Mark the specified packages as manually installed \\
+		\green{\texttt{-{}-mark-auto <name1>, \dots}} & Mark the specified packages as automatically installed \\
+		
+		\green{\texttt{-{}-mark-manual <name1>, \dots}} & Mark the specified packages as manually installed \\
 		
 		\green{\texttt{-{}-remove <name1>, \dots}} & Remove the specified packages and their config files if they were not modified \\
 		
@@ -114,7 +116,7 @@
 		
 		\texttt{-{}-install-from-file <name.tpm.tar>} & Install or upgrade from a \texttt{.tpm.tar} file \\
 		
-		\green{\texttt{-{}-dependency-graph <name1>, \dots}} & Print the dependency graph for the specified packages in the dot format \\
+		\green{\texttt{-{}-installation-graph <name1>, \dots}} & Print the dependency graph in the dot format; If packages are specified, they are added to the graph. \\
 		
 		\green{\texttt{-{}-reverse-dependencies <name>}} & List the installed packages that depend on the specified package \\
 		

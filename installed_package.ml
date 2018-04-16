@@ -58,7 +58,7 @@ let check_installation status print =
                 in
                 let pr =
                     (List.exists
-                        (fun n ->
+                        (fun (n, _) ->
                             if (not (is_pkg_name_installed status n))
                             then ((if print
                                 then print_endline ("Package \"" ^ n ^
@@ -74,7 +74,7 @@ let check_installation status print =
                                     else ());
                                     true)
                                 else false))
-                        pkg.rdeps)
+                        pkg.deps)
                     |> check_non_critical pr
                 in
                 (t::cts, pr))
@@ -92,7 +92,52 @@ let show_problems_with_installation () =
             "Noncritical problems but no critical problems found"; false
         | Critical -> print_endline "Critical problems found"; false
 
-let force_remove status name =
+let mark_package
+    (name : string)
+    (status : status option)
+    (adverb : string)
+    (reason : installation_reason) =
+
+    match status with None -> None | Some status ->
+    print_string_flush ("Marking package \"" ^ name ^
+        "\" as " ^ adverb ^ " installed");
+    match select_status_tuple_by_name status name with
+        | None ->
+            print_newline ();
+            print_string ("    Package not found in status");
+            print_failed ();
+            None
+        | Some (pkg, ir, state) ->
+            let status =
+                update_status_tuple status (pkg, reason, state)
+            in
+            match write_status status with
+                | false -> print_failed (); None
+                | true -> print_ok (); Some status
+
+let mark_package_manual name status =
+    mark_package name status "manually" Manual
+
+let mark_package_auto name status =
+    mark_package name status "automatically" Auto
+
+let ui_show_version name =
+    match read_status () with
+        | None -> false
+        | Some status ->
+
+    match select_status_tuple_by_name status name with
+        | None -> print_endline "---"; true
+        | Some (pkg, _, _) ->
+            match (pkg.v) with
+                | None ->
+                    print_endline "Invalid package (it has no version)";
+                    false
+                | Some v ->
+                    print_endline (string_of_version v);
+                    true
+
+(* let force_remove status name =
     match select_status_tuple_by_name status name with
         | None -> print_endline ("Force_Remove: Package \"" ^ name ^
             "\" is not installed"); None
@@ -266,4 +311,4 @@ let force_remove status name =
     |> remove_from_status
     )
     )
-    )
+    ) *)

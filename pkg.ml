@@ -12,25 +12,25 @@ let string_of_pkg_type = function
     | Conf -> "conf"
 
 type pkg = {
-    t:pkg_type option;                (* package type *)
-    n:string option;                  (* package name *)
-    v:version option;                 (* version *)
-    a:arch option;                    (* architecture *)
-    files:string list;                (* path *)
-    cfiles:(string * string) list;    (* sha512sum * path *)
-    dirs: string list;                (* path *)
-    rdeps:string list;
+    t:pkg_type option;                          (* package type *)
+    n:string option;                            (* package name *)
+    v:version option;                           (* version *)
+    a:arch option;                              (* architecture *)
+    files:string list;                          (* path *)
+    cfiles:(string * string) list;              (* sha512sum * path *)
+    dirs: string list;                          (* path *)
+    deps: (string * package_constraint list) list;
 }
 
 type static_pkg = {
-    st:pkg_type;                       (* package type *)
-    sn:string;                         (* package name *)
-    sv:version;                        (* version *)
-    sa:arch;                           (* architecture *)
-    sfiles:string list;                (* path *)
-    scfiles:(string * string) list;    (* sha512sum * path *)
-    sdirs: string list;                (* path *)
-    srdeps:string list;
+    st:pkg_type;                                (* package type *)
+    sn:string;                                  (* package name *)
+    sv:version;                                 (* version *)
+    sa:arch;                                    (* architecture *)
+    sfiles:string list;                         (* path *)
+    scfiles:(string * string) list;             (* sha512sum * path *)
+    sdirs: string list;                         (* path *)
+    sdeps: (string * package_constraint list) list;
 }
 
 let empty_pkg = {
@@ -41,7 +41,7 @@ let empty_pkg = {
     files = [];
     cfiles = [];
     dirs = [];
-    rdeps = []
+    deps = []
 }
 
 (* Generates a string that uniquely identifies the package *)
@@ -53,16 +53,45 @@ let static_of_dynamic_pkg pkg =
     match (pkg.t, pkg.n, pkg.v, pkg.a) with
         | (Some t, Some n, Some v, Some a) -> Some { st = t; sn = n; sv = v; sa = a;
             sfiles = pkg.files; scfiles = pkg.cfiles; sdirs = pkg.dirs;
-            srdeps = pkg.rdeps }
+            sdeps = pkg.deps }
         | _ -> None
 
+let dynamic_of_static_pkg s =
+    {
+        t = Some s.st;
+        n = Some s.sn;
+        v = Some s.sv;
+        a = Some s.sa;
+        files = s.sfiles;
+        cfiles = s.scfiles;
+        dirs = s.sdirs;
+        deps = s.sdeps
+    }
+
 let xml_of_pkg (p:pkg) =
+    let xml_of_package_constraint_list cs =
+        List.fold_left
+            (fun a c -> match c with
+                | No_constraint -> a
+                | Version_equals v
+                | Version_newer_equals v ->
+                    Element ("constraint",
+                        [("type", string_of_package_constraint_type c)],
+                        [PCData (string_of_version v)]) :: a)
+            []
+            cs
+    in
     let xes = []
     in
     let xes = List.fold_left
-        (fun a d -> Element ("rdep", [],[ PCData d]) :: a)
+        (fun a (n, cs) ->
+            Element (
+                "dep",
+                [],
+                Element ("name", [], [PCData n])
+                ::xml_of_package_constraint_list cs) :: a)
         xes
-        (List.rev p.rdeps)
+        (List.rev p.deps)
     in
     let xes = List.fold_left
         (fun a n -> Element ("dir", [], [PCData n]) :: a)
@@ -93,8 +122,13 @@ let xml_of_pkg (p:pkg) =
     in
     match p.t with
         | None -> None
-        | Some Sw -> Some (Element ("sw", [("file_version","1.0")], xes))
-        | Some Conf -> Some (Element ("conf", [("file_version", "1.0")], xes))
+        | Some Sw ->
+            Some (
+                Element ("sw", [("file_version",Tpm_config.desc_file_version)],
+                xes))
+        | Some Conf ->
+            Some (Element ("conf", [("file_version", Tpm_config.desc_file_version)],
+                xes))
 
 let pkg_of_xml x =
     let process_name pkg = function
@@ -132,9 +166,36 @@ let pkg_of_xml x =
         | [PCData d] -> Some {pkg with dirs = pkg.dirs @ [d]}
         | _ -> (print_endline "Invalid directory"; None)
     in
-    let process_rdep pkg = function
-        | [PCData d] -> Some {pkg with rdeps = pkg.rdeps @ [d]}
-        | _ -> (print_endline "Invalid runtime dependency"; None)
+    let process_dep pkg elems =
+        let process_element (name, constraints) = function
+            | Element ("name", _, [PCData n]) ->
+                (Some n, constraints)
+            | Element ("constraint", attrs, [PCData cd]) ->
+                (match List.assoc_opt "type" attrs with
+                    | None -> (None, [])
+                    | Some t -> match t with
+                        | "version_equals" ->
+                            (match version_of_string cd with
+                                | None -> (None, [])
+                                | Some v ->
+                                    (name, Version_equals v :: constraints))
+                        | "version_newer_equals" ->
+                            (match version_of_string cd with
+                                | None -> (None, [])
+                                | Some v ->
+                                    (name, Version_newer_equals v :: constraints))
+                        | _ -> (None, []))
+            | _ -> (None, [])
+        in
+        match
+            List.fold_left
+                process_element
+                (None, [])
+                elems
+        with
+            | (Some name, constraints) ->
+                Some {pkg with deps = pkg.deps @ [(name, constraints)]}
+            | _ -> (print_endline "Invalid runtime dependency"; None)
     in
     let process_toplevel_element pkg = function
         | PCData d -> (print_endline ("Invalid toplevel element: \"" ^ d ^ "\""); None)
@@ -145,7 +206,7 @@ let pkg_of_xml x =
             | "file" -> process_file pkg cs
             | "cfile" -> process_cfile pkg attrs cs
             | "dir" -> process_dir pkg cs
-            | "rdep" -> process_rdep pkg cs
+            | "dep" -> process_dep pkg cs
             | _ -> (print_endline ("Invalid xml tag: \"" ^ t ^ "\""); None)
         )
     in
@@ -162,7 +223,7 @@ let pkg_of_xml x =
                 | None -> None
                 | Some t -> match List.assoc_opt "file_version" attr with
                     | None -> (print_endline "Desc file version not specified"; None)
-                    | Some fv -> if fv <> "1.0"
+                    | Some fv -> if fv <> Tpm_config.desc_file_version
                         then (print_endline ("Unsupported desc file version: " ^ fv); None)
                         else
                             process_toplevel_elements (Some {empty_pkg with t = Some t}) cs)
@@ -198,27 +259,46 @@ let write_package pkg = match xml_of_pkg pkg with
                 Tpm_config.desc_file_name ^ "\".");
             false)
 
-let pkg_newer p1 p2 = match (p1.v, p2.v) with
-    | (Some v1, Some v2) -> version_bigger v1 v2
-    | _ -> false
+let spkg_newer sp1 sp2 =
+    version_bigger sp1.sv sp2.sv
 
 (* These functions are here to avoid a circular dependency between Packed_package
  * and Repository *)
-let pkg_name_of_packed_name n =
-    match String.rindex_opt n '_' with
+let pkg_split_packed_name packed =
+    match String.rindex_opt packed '-' with
         | None ->
-            print_endline ("Packed: Invalid package name: \"" ^ n ^ "\"");
+            print_endline ("Packed: Invalid package name: \"" ^ packed ^ "\"");
             None
-        | Some i -> Some (String.sub n 0 i)
+        | Some i ->
+    match String.rindex_opt packed '_' with
+        | None ->
+            print_endline ("Packed: Invalid package name: \"" ^ packed ^ "\"");
+            None
+        | Some j when i >= j ->
+            print_endline ("Packed: Invalid package name: \"" ^ packed ^ "\"");
+            None
+        | Some j ->
+    match String.sub packed (i + 1) (j - (i + 1)) |> version_of_string with
+        | None ->
+            print_endline
+                ("Packed: Invalid version number in package name: \"" ^
+                packed ^ "\"");
+            None
+        | Some v ->
+    Some (String.sub packed 0 i, v)
 
 let packed_name_of_pkg pkg =
-    match (pkg.n, pkg.v, pkg.a) with
-        | (Some n, Some v, Some a) -> Some (
-            n ^ "_" ^
-            (string_of_arch a) ^ ".tpm.tar")
+    match static_of_dynamic_pkg pkg with
+        | Some spkg -> Some (
+            spkg.sn ^ "-" ^
+            string_of_version spkg.sv ^ "_" ^
+            string_of_arch spkg.sa ^ ".tpm.tar")
         | _ -> None
 
 let compare_pkgs_by_name pkg1 pkg2 =
     match (pkg1.n, pkg2.n) with
         | (Some n1, Some n2) -> compare_names n1 n2
         | _ -> raise (Critical_error "Pkg: uncomparable packages")
+
+let compare_deps (n1,_) (n2,_) =
+    compare_names n1 n2

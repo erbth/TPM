@@ -12,11 +12,7 @@ let create_package t =
         | Some t ->
             let s =
                 try
-                    let pu = Unix.umask 0o000
-                    in
                     Unix.mkdir Tpm_config.destdir_name 0o755;
-                    let _ = Unix.umask pu
-                    in
                     Unix.chown Tpm_config.destdir_name 0 0; true
                 with
                     | Unix.Unix_error (c,_,_) -> print_endline
@@ -139,47 +135,56 @@ let add_files_from_destdir () =
                         in
                         write_package {pkg with files = fs; cfiles = cfs; dirs = ds}
 
-let add_runtime_dependency d =
-    match read_package () with
+let pkg_add_dependency str =
+    match pkg_name_constraints_of_string str with
         | None -> false
-        | Some pkg ->
-            let rdeps = sorted_unique_insert compare_names pkg.rdeps d
-            in
-                write_package {pkg with rdeps = rdeps}
+        | Some dep ->
+            match read_package () with
+                | None -> false
+                | Some pkg ->
+                    let deps = sorted_unique_insert compare_deps pkg.deps dep
+                    in
+                write_package {pkg with deps = deps}
 
-let remove_runtime_dependencies () =
+let pkg_remove_dependencies () =
     match read_package () with
         | None -> false
-        | Some pkg -> write_package {pkg with rdeps = []}
+        | Some pkg -> write_package {pkg with deps = []}
 
 let create_packed_form () =
     let pack archivename =
-        let pack_destdir_cmd =
-            !program_cd ^ " " ^ Tpm_config.destdir_name ^ " && " ^
-            !program_tar ^ " -cpI " ^  !program_gzip ^
-            " -f ../" ^ Tpm_config.destdir_name ^ ".tar.gz *"
+        let pack_files_args = [|
+                !program_tar;
+                "-cpI"; !program_gzip;
+                "-f"; Tpm_config.destdir_name ^ ".tar.gz";
+                "-C"; Tpm_config.destdir_name;
+                "."|]
         in
         try
-            let pack_package_cmd =
-                !program_tar ^ " -cf " ^ archivename ^ " " ^
-                Tpm_config.desc_file_name ^ " " ^
-                Tpm_config.destdir_name ^ ".tar.gz" ^
+            let pack_package_args =
                     List.fold_left
                         (fun a s ->
                             (if Sys.file_exists s
-                                then a ^ " " ^ s
+                                then Array.append a [|s|]
                                 else a))
-                        ""
+                        [|!program_tar;
+                            "-cf"; archivename;
+                            Tpm_config.desc_file_name;
+                            Tpm_config.destdir_name ^ ".tar.gz"|]
                         all_packaging_scripts
             in
-            if Sys.command pack_destdir_cmd <> 0
-            then failwith "Compressing destdir failed"
-            else
-            if Sys.command pack_package_cmd <> 0
-            then failwith "Creating the package archive failed"
-            else true
+
+            match run_program pack_files_args with
+                | (_, WEXITED 0) ->
+                    (match run_program pack_package_args with
+                        | (_, WEXITED 0) -> true
+                        | _ -> failwith "Creating the package archive failed")
+                | _ -> failwith "Compressing destdir failed"
         with
-            | Sys_error m | Failure m ->
+            | Unix.Unix_error (c, _, _) ->
+                print_endline ("Packing the package failed: " ^
+                    Unix.error_message c ^ "."); false
+            | Failure m ->
                 print_endline ("Packing the package failed: " ^ m ^ "."); false
             | _ ->
                 print_endline "Packing the package failed."; false
@@ -191,10 +196,11 @@ let create_packed_form () =
             if information_missing pkg
             then (print_endline "Information is missing."; false)
             else
-            match (pkg.n, pkg.v, pkg.a) with
-                | (Some n, Some v, Some a) ->
-                    let archivename = n ^ "_" ^
-                        (string_of_arch a) ^ ".tpm.tar"
+            match static_of_dynamic_pkg pkg with
+                | (Some spkg) ->
+                    let archivename = spkg.sn ^ "-" ^
+                        string_of_version spkg.sv ^ "_" ^
+                        string_of_arch spkg.sa ^ ".tpm.tar"
                     in
                         pack archivename
                 | _ -> print_endline "No idea what's going on ... Aborting."; false

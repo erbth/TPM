@@ -6,10 +6,12 @@ type repository = DirectoryRepository of string
 let string_of_repository = function
     | DirectoryRepository p -> "directory repository \"" ^ p ^ "\""
 
-let provide_transport_shape_dir_repo path pkg =
-    match (pkg.a, packed_name_of_pkg pkg) with
-        | (Some a, Some pn) -> Some (path ^ "/" ^ (string_of_arch a) ^ "/" ^ pn)
-        | _ -> print_endline "Repository: Invalid package"; None
+let provide_transport_shape_dir_repo path name version arch =
+        Some (path ^ "/" ^ string_of_arch arch ^ "/" ^
+            name ^ "-" ^ string_of_version version ^ "_" ^
+            string_of_arch arch ^ ".tpm.tar")
 
-let provide_transport_shape repo pkg = match repo with
-    | DirectoryRepository path -> provide_transport_shape_dir_repo path pkg
+let provide_transport_shape repo name version arch =
+    match repo with
+        | DirectoryRepository path ->
+            provide_transport_shape_dir_repo path name version arch

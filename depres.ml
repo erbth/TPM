@@ -4,108 +4,393 @@ open Status
 open Configuration
 open Repository_search
 open Repository
+open Installation
+open Installed_package
 
-type dependency_graph = (pkg, installation_reason * (repository * pkg) list) Hashtbl.t
+(* type dependency_graph = (pkg, installation_reason * (repository * pkg) list) Hashtbl.t *)
 
-let rec add_node_to_dependency_graph (cfg: configuration) g (repo, pkg, reason) =
-    match (Hashtbl.mem g pkg) with
-        | true -> ()
-        | false -> (
-            let rdep_repo_pkg_list =
-                List.map
-                    (fun n -> match find_and_select_package_in_all_repos n with
-                        | Some (r,p) -> (r,p)
-                        | None -> failwith ("Depres: Package \"" ^ n ^
-                            "\" not found for architecture \"" ^
-                            (string_of_arch cfg.a) ^ "\""))
-                    pkg.rdeps
-            in
-            Hashtbl.add g pkg (reason, rdep_repo_pkg_list);
-            List.map (fun (r,p) -> (r, p, Auto)) rdep_repo_pkg_list
-            |> add_nodes_to_dependency_graph cfg g
-        )
+type specific_igraph_node =
+    Present_pkg of bool |
+    Wrong_pkg of repository |
+    Missing_pkg of repository
 
-and add_nodes_to_dependency_graph cfg g repo_pkg_reason_list =
-    List.iter (add_node_to_dependency_graph cfg g) repo_pkg_reason_list
+(* Installation reason, [(constraint, source)], infered version, hook *)
+type igraph_node =
+    installation_reason *
+    (package_constraint * string option) list * version *
+    specific_igraph_node
 
-let create_dependency_graph () = Hashtbl.create ~random:true 1000
+(* Name, node, dependencies, dependents (reverse dependencies) *)
+type igraph = (string, igraph_node * string list * string list) Hashtbl.t
 
-let dependency_graph_of_repo_package_reason_list cfg rprs =
-    let g = create_dependency_graph ()
+type ncrl = (
+    string *
+    (package_constraint * string option) list *
+    installation_reason
+) list
+
+let rec add_node_to_igraph (cfg : configuration) (status : status)
+    (ig : igraph) (name, constraints, reason) =
+
+    let add_dependencies (sp : static_pkg) =
+        add_nodes_to_igraph cfg status ig
+            (List.map
+                (fun (n,cs) ->
+                    let cs =
+                        List.map (fun c -> (c, Some sp.sn)) cs
+                    in
+                    (n, cs, Auto))
+                sp.sdeps);
+        (* Add reverse edges to the dependencies *)
+        List.iter
+            (fun (n, _) ->
+                match Hashtbl.find_opt ig n with
+                    | None ->
+                        raise
+                            (Gp_exception
+                                ("Node \"" ^ n ^
+                                "\" was not added to the graph.\""))
+                    | Some (node, deps, dets) ->
+                        let dets =
+                            sp.sn :: dets
+                        in
+                        Hashtbl.replace ig n (node, deps, dets))
+            sp.sdeps
     in
-    add_nodes_to_dependency_graph cfg g rprs;
-    g
+    let add_missing_package (cs : annotated_package_constraint list) =
+        match
+            find_and_select_package_in_all_repos
+                name
+                (List.map (fun (c, _) -> c) cs)
+                cfg.a
+        with
+            | None -> raise (Gp_exception ("Package \"" ^ name ^
+                "\" not found or an impossible situation was requested"))
+            | Some (r, sp) ->
+                Hashtbl.replace ig name
+                    ((reason, cs, sp.sv, Missing_pkg r),
+                    List.map (fun (n,_) -> n) sp.sdeps, []);
+                add_dependencies sp
+    in
+    let add_installed_package
+        (s_pkg : pkg)
+        (s_status : installation_status)
+        (s_reason : installation_reason)
+        (cs : annotated_package_constraint list) =
+        let s_sp =
+            match static_of_dynamic_pkg s_pkg with
+                | None ->
+                    raise
+                        (Gp_exception "Invalid package in status")
+                | Some sp -> sp
+        in
+        let reason = max_reason [s_reason; reason]
+        in
+        let rc = s_reason <> reason
+        in
+        let (sp, node) =
+            match
+                find_and_select_package_in_all_repos
+                    name
+                    (List.map (fun (c, _) -> c) cs)
+                    cfg.a
+            with
+                | Some (repo, sp) when compare_version sp.sv s_sp.sv <> 0 ->
+                    (sp, (reason, cs, sp.sv, Wrong_pkg repo))
+                | Some _
+                | None ->
+                    match
+                        cs_satisfied
+                            s_sp.sv
+                            (List.map (fun (c,_) -> c) cs)
+                    with
+                        | false ->
+                            raise
+                                (Gp_exception ("Package \"" ^ name ^
+                                "\" was not found in any repository and the " ^
+                                "installed version is not sufficient, or " ^
+                                "an impossible situation was requested"))
+                        | true ->
+                            (s_sp, (reason, cs, s_sp.sv, Present_pkg rc))
+        in
+        Hashtbl.replace
+            ig
+            name
+            (node, List.map (fun (n, _) -> n) sp.sdeps, []);
+        add_dependencies sp
+    in
+    let remove_from_igraph (ig : igraph) (name : string) =
+        match Hashtbl.find_opt ig name with
+            | None ->
+                raise
+                    (Gp_exception ("Package \"" ^ name ^
+                    "\" shall be removed however it is not in the graph"))
+            | Some (node, deps, dets) ->
+                Hashtbl.remove ig name;
+                (* Remove constraints and reverse edges from dependencies *)
+                List.iter
+                    (fun n ->
+                        match Hashtbl.find_opt ig n with
+                            | None -> ()
+                            | Some ((reason, cs, v, spec), deps, dets) ->
+                                let cs =
+                                    List.filter
+                                        (fun (c, so) ->
+                                            match so with
+                                                | Some s when s = name -> false
+                                                | _ -> true)
+                                    cs
+                                in
+                                let dets =
+                                    List.filter
+                                        (fun n -> n <> name)
+                                        dets
+                                in
+                                Hashtbl.replace
+                                    ig
+                                    n
+                                    ((reason, cs, v, spec), deps, dets))
+                    deps
+    in
+    let update_constraints_reason
+        ((node : igraph_node), (deps : string list), (dets : string list))
+        (reason : installation_reason)
+        (cs : annotated_package_constraint list) =
 
-let derive_installation_order_from_graph g rp_sources =
+        let (cr, _, v, spec) =
+            node
+        in
+        let node =
+            match spec with
+                | Present_pkg rc ->
+                    let rc = rc || reason <> cr
+                    in
+                    (reason, cs, v, Present_pkg rc)
+                | Wrong_pkg x -> (reason, cs, v, Wrong_pkg x)
+                | Missing_pkg x -> (reason, cs, v, Missing_pkg x)
+        in
+        Hashtbl.replace
+            ig
+            name
+            (node, deps, dets)
+    in
+    match Hashtbl.find_opt ig name with
+        | Some (node, deps, dets) ->
+            let (ir, cs, v, spec) =
+                node
+            in
+            (* Determine if the selected package must be replaced *)
+            let nr = max_reason [ir; reason]
+            in
+            let cs =
+                merge_annotated_constraints cs constraints
+            in
+            (match
+                cs_satisfied
+                    v
+                    (List.map (fun (c,_) -> c) cs)
+            with
+                | true ->
+                    update_constraints_reason
+                        (node, deps, dets)
+                        nr
+                        cs
+                | false ->
+                    (* Remove the node *)
+                    remove_from_igraph ig name;
+                    (* Add the node with the new parameters *)
+                    add_node_to_igraph cfg status ig (name, cs, nr))
+        | None ->
+            (match select_status_tuple_by_name status name with
+                | None -> add_missing_package constraints
+                | Some (sp, sr, ss) ->
+                    add_installed_package sp ss sr constraints)
+        (* | _ -> raise (Gp_exception "Not implemented yet") *)
+
+and add_nodes_to_igraph
+    (cfg : configuration)
+    (status : status)
+    (ig : igraph)
+    (ncrl : ncrl) =
+
+    List.iter
+        (add_node_to_igraph cfg status ig)
+        ncrl
+
+let build_igraph (cfg : configuration) (status : status) (ncrl : ncrl) =
+    let ig = Hashtbl.create ~random:true 100
+    in
+    try
+        let existing_ncrl =
+            List.map
+                (fun (pkg, reason, pstate) ->
+                    let name =
+                        match pkg.n with
+                            | None ->
+                                raise
+                                    (Gp_exception
+                                    "Status tuple with package with no name")
+                            | Some n -> n
+                    in
+                    (name, [], reason))
+                (select_all_status_tuples status)
+        in
+        add_nodes_to_igraph cfg status ig existing_ncrl;
+        add_nodes_to_igraph cfg status ig ncrl;
+        Some ig
+    with
+        Gp_exception msg -> print_endline ("Depres: " ^ msg); None
+
+(* let manual_pkgs_of_igraph (ig : igraph) =
+    Hashtbl.fold
+        (fun name (node, edges) mpkgs ->
+            match node with
+                | Present_pkg (Manual, _, _) -> name :: mpkgs
+                | Wrong_pkg (Manual, _, _) -> name :: mpkgs
+                | Missing_pkg (Manual, _, _) -> name :: mpkgs
+                | _ -> mpkgs)
+            ig
+            [] *)
+
+let install_configure_from_igraph
+    (cfg : configuration) (status : status) (ig : igraph) =
     let visited_set = Hashtbl.create 100
     in
-    let rec process_child l (repo, pkg) =
-            match pkg.n with
-                | None -> print_endline "Depres: Package with no name";
-                    raise Gp_exception
-                | Some name ->
-                    if not (Hashtbl.mem visited_set name)
-                    then visit_node name (repo, pkg) @ l
-                    else l
-    and visit_node name (repo, pkg) =
-        match Hashtbl.find_opt g pkg with
-            | None -> print_endline "Depres: Package not in graph";
-                raise Gp_exception
-            | Some (reason, rdep_repo_pkg_list) ->
+    let rec process_child status name =
+        match status with None -> None | Some status ->
+        if not (Hashtbl.mem visited_set name)
+        then visit_node status name
+        else Some status
+    and visit_node status name =
+        match Hashtbl.find_opt ig name with
+            | None -> print_endline "Depres: Package not in graph"; None
+            | Some (node, deps, dets) ->
                 Hashtbl.add visited_set name ();
-                List.fold_left
-                    process_child
-                    [(repo, pkg, reason)]
-                    rdep_repo_pkg_list
-
+                let status =
+                    List.fold_left
+                        process_child
+                        (Some status)
+                        deps;
+                in
+                match node with
+                    | (reason, constraints, version, Missing_pkg repo) ->
+                        elementary_install_package
+                            cfg
+                            name
+                            version
+                            reason
+                            repo
+                            status
+                    | (reason, constraints, version, Wrong_pkg repo) ->
+                        elementary_change_package
+                            cfg
+                            name
+                            version
+                            reason
+                            repo
+                            status
+                    | (reason, constraints, version, Present_pkg rc) ->
+                        (match rc with
+                            | false -> status
+                            | true ->
+                                (match reason with
+                                    | Manual -> mark_package_manual name
+                                    | Auto -> mark_package_auto name)
+                                    status)
     in
     List.fold_left
         process_child
-        []
-        rp_sources
+        (Some status)
+        (hashtbl_keys ig)
 
-let print_dependency_graph names =
+let print_igraph names =
     print_target ();
-    match read_configuration () with None -> raise Gp_exception | Some cfg ->
-    match read_status () with None -> raise Gp_exception | Some status ->
-    let g =
-        create_dependency_graph ()
-    in
-    let rprs =
-        List.map
-            (fun n -> match find_and_select_package_in_all_repos n with
-                | None -> print_endline ("Depres: Package \"" ^ n ^
-                    "\" not found for architecture \"" ^ (string_of_arch cfg.a) ^
-                    "\""); raise Gp_exception
-                | Some (r, p) -> (r, p, Manual))
+    match read_configuration () with None -> false | Some cfg ->
+    match read_status () with None -> false | Some status ->
+    match
+        List.fold_left
+            (fun a n ->
+                match a with None -> None | Some a ->
+                match pkg_name_constraints_of_string n with
+                    | None ->
+                        print_endline
+                            ("Invalid package description \"" ^ n ^ "\"");
+                            None
+                    | Some (n, cs) ->
+                        let cs =
+                            List.map (fun c -> (c, None)) cs
+                        in
+                        Some ((n, cs, Manual)::a))
+            (Some [])
             names
-    in
-    (try
-        add_nodes_to_dependency_graph cfg g rprs
     with
-        Failure msg -> print_endline msg;
-            raise Gp_exception);
-    print_endline "digraph Dependencies {";
-    Hashtbl.iter
-        (fun pkg (r, rp_deps) -> print_endline
-            (string_of_pkg pkg ^ " [label=\"" ^ string_of_pkg pkg ^ " : " ^
-            (match select_status_tuple_by_pkg status pkg with
-                | None -> "---"
-                | Some (_,r,_) -> string_of_installation_reason r) ^
-            "\"];"))
-        g;
-    Hashtbl.iter
-        (fun pkg (r, rp_deps) -> if rp_deps <> []
-            then List.iter
-                    (fun (_,dp) -> print_endline (string_of_pkg pkg ^
-                        " -> " ^ string_of_pkg dp ^ ";"))
-                    rp_deps
-            else ())
-        g;
-    print_endline "}";
-    ()
+        | None -> false
+        | Some ncrl ->
+    match build_igraph cfg status ncrl with
+        | None -> false
+        | Some ig ->
 
-let get_dependent_package_names tuple_predicate status name =
+    let string_of_cs cs =
+        ui_string_of_annotated_constraints cs
+    in
+    let pf =
+        Perf_hash.create_empty ()
+    in
+    print_endline "digraph Dependencies {";
+    Hashtbl.fold
+        (fun name (node, deps, dets) pf ->
+            let (pf, nc) =
+                Perf_hash.map pf name
+            in
+            let nc =
+                string_of_int nc
+            in
+            print_endline (nc ^ " [label=\"" ^
+            (match node with
+                | (ir, cs, v, Present_pkg rc) -> "Present_pkg (" ^ name ^ ", " ^
+                    string_of_installation_reason ir ^ ", " ^
+                    string_of_cs cs ^ ", " ^
+                    string_of_version v ^ ", " ^ string_of_bool rc ^ ")"
+                | (ir, cs, v, Wrong_pkg r) -> "Wrong_pkg (" ^ name ^ ", " ^
+                    string_of_installation_reason ir ^ ", " ^
+                    string_of_cs cs ^ ", " ^
+                    string_of_version v ^ ", _)"
+                | (ir, cs, v, Missing_pkg r) -> "Missing_pkg (" ^ name ^ ", " ^
+                    string_of_installation_reason ir ^ ", " ^
+                    string_of_cs cs ^ ", " ^
+                    string_of_version v ^ ", _)")
+            ^ "\"];");
+            let pf =
+                List.fold_left
+                    (fun pf edge ->
+                        let (pf, ec) =
+                            Perf_hash.map pf edge
+                        in
+                        print_endline (nc ^ " -> " ^ string_of_int ec ^ ";");
+                        pf)
+                    pf
+                    deps
+            in
+            let pf =
+                List.fold_left
+                    (fun pf redge ->
+                        let (pf, ec) =
+                            Perf_hash.map pf redge
+                        in
+                        print_endline (nc ^ " -> " ^ string_of_int ec ^
+                            "[color=red, style=dotted];");
+                        pf)
+                    pf
+                    dets
+            in
+            pf)
+        ig
+        pf
+    |> ignore;
+    print_endline "}";
+    true
+
+(* let get_dependent_package_names tuple_predicate status name =
     let dep_set =
         Hashtbl.create 100
     in
@@ -175,4 +460,4 @@ let print_reverse_dependencies name =
         name ^ "\"");
     List.iter
         print_endline
-        installed_deps
+        installed_deps *)

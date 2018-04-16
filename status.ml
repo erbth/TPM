@@ -2,8 +2,9 @@ open Xml
 open Util
 open Pkg
 
-type installation_status =  Installation | Installed | Configuration |
-                            Configured | Removal | Upgrade
+type installation_status =  Installing | Installed | Configuring |
+                            Configured | Changing_unconf | Changing |
+                            Removing_unconf | Removing
 type installation_reason = Auto | Manual
 type status_tuple = pkg * installation_reason * installation_status
 type status = (string, status_tuple) Hashtbl.t
@@ -17,27 +18,40 @@ let string_of_installation_reason = function
     | Auto -> "auto"
     | Manual -> "manual"
 
+let max_reason =
+    let rec work buf = function
+        | [] -> buf
+        | r::rs -> if r = Manual then Manual else work buf rs
+    in
+    work Auto
+
 let installation_status_of_string = function
-    | "installation" -> Some Installation
+    | "installing" -> Some Installing
     | "installed" -> Some Installed
-    | "configuration" -> Some Configuration
+    | "configuring" -> Some Configuring
     | "configured" -> Some Configured
-    | "removal" -> Some Removal
-    | "upgrade" -> Some Upgrade
+    | "changing_unconf" -> Some Changing_unconf
+    | "changing" -> Some Changing
+    | "removing_unconf" -> Some Removing_unconf
+    | "removing" -> Some Removing
     | _ -> None
 
 let string_of_installation_status = function
-    | Installation -> "installation"
+    | Installing -> "installing"
     | Installed -> "installed"
-    | Configuration -> "configuration"
+    | Configuring -> "configuring"
     | Configured -> "configured"
-    | Removal -> "removal"
-    | Upgrade -> "upgrade"
+    | Changing_unconf -> "changing_unconf"
+    | Changing -> "changing"
+    | Removing_unconf -> "removing_unconf"
+    | Removing -> "removing"
 
 let is_installed_of_state = function
     | Installed -> true
-    | Configuration -> true
+    | Configuring -> true
     | Configured -> true
+    | Changing_unconf -> true
+    | Removing_unconf -> true
     | _ -> false
 
 let is_configured_of_state = function
@@ -207,13 +221,13 @@ let write_status s =
 let compare_status_tuples (p1,_,_) (p2,_,_) =
     compare_pkgs_by_name p1 p2
 
-let select_all_status_tuples status =
+let select_all_status_tuples (status : status) =
     Hashtbl.fold
         (fun n t a -> t::a)
         status
         []
 
-let rec select_status_tuple_by_name status name =
+let rec select_status_tuple_by_name (status : status) (name : string) =
     Hashtbl.find_opt status name
 
 let select_status_tuple_by_pkg status pkg =
@@ -242,12 +256,6 @@ let update_status_tuple status (p,r,ps) =
             match Hashtbl.mem status name with
                 | false -> status
                 | true -> Hashtbl.replace status name (p,r,ps); status
-
-let update_status_tuple_installation_reason status name reason =
-    match select_status_tuple_by_name status name with
-        | Some (p, r, s) -> update_status_tuple status (p, reason, s)
-        | None -> status
-
 
 let delete_status_tuple status (p,_,_) =
     match p.n with
