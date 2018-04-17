@@ -302,25 +302,67 @@ let remove_fs_items
     remove_files rmfiles status
     |> remove_directories dirs
 
-let execute_packaging_script (pkg_name : string) (script_name : string) =
-    let spath_args =
-        [| form_target_path (
+let execute_packaging_script_if_exists
+    (pkg_name : string)
+    (script_name : string)
+    (status : status option) =
+
+    match status with None -> None | Some status ->
+    print_string_flush ("    Checking for " ^ script_name);    
+    let spath =
+        form_target_path (
             Tpm_config.package_info_location ^ "/" ^
             pkg_name ^ "/" ^
-            script_name) |]
+            script_name)
+    in
+    match file_status spath with
+        | Non_existent ->
+            print_ok ();
+            Some status
+        | Directory ->
+            print_newline ();
+            print_string ("    It is a directory");
+            print_failed ();
+            None
+        | Read_error ->
+            print_newline ();
+            print_string ("    Read error");
+            print_failed ();
+            None
+        | Other_file ->
+    print_ok ();
+    print_string_flush ("    Running " ^ script_name);
+    let spath_args =
+        [| spath |]
     in
     try
+        Unix.chdir (form_target_path "/");
         match run_program spath_args with
-            | (_, WEXITED 0) -> ()
-            | _ -> raise (Gp_exception (script_name ^ " failed"))
+            | (_, WEXITED 0) ->
+                print_ok (); Some status
+            | (_, WEXITED c) ->
+                print_newline ();
+                print_string ("    " ^ script_name ^ " failed with code " ^
+                    string_of_int c);
+                print_failed ();
+                None
+            | _ ->
+                print_newline ();
+                print_string ("    " ^ script_name ^ " failed");
+                print_failed ();
+                None
     with
         Unix.Unix_error (c, _, _) ->
-            raise (Gp_exception ("Executing  " ^ script_name ^
-            " failed: " ^ Unix.error_message c))
+            print_newline ();
+            print_string
+                ("    Executing  " ^ script_name ^ " failed: " ^
+                Unix.error_message c);
+            print_failed ();
+            None
 
 let unconfigure_package (name : string) (status : status option) =
     match status with None -> None | Some status ->
-    print_string_flush "    Unconfiguring the package";
+    print_string_flush "    Checking runtime for unconfiguring";
     match !runtime_system with
         | Directory_runtime _ ->
             print_newline ();
@@ -330,17 +372,11 @@ let unconfigure_package (name : string) (status : status option) =
             print_failed ();
             None
         | Native_runtime ->
-
-    try
-        execute_packaging_script name Tpm_config.unconfiguresh_name;
-        print_ok ();
-        Some status
-    with
-        | Gp_exception msg ->
-            print_newline ();
-            print_string ("    " ^ msg);
-            print_failed ();
-            None
+    print_ok ();
+    execute_packaging_script_if_exists
+        name
+        Tpm_config.unconfiguresh_name
+        (Some status)
 
 (* let execute_packaging_script_filter spkg scriptname status =
     match status with None -> None | Some status ->
@@ -661,6 +697,93 @@ let elementary_change_package cfg name version reason repo status =
     |> copy_packaging_scripts spkg
     |> remove_fs_items fs_items_to_remove
     |> confirm_change spkg
+
+let elementary_configure_package (name : string) (status : status option) =
+    match status with None -> None | Some status ->
+    print_endline ("Configuring package \"" ^ name ^ "\"");
+
+    let check (name : string) (status : status option) =
+        match status with None -> None | Some status ->
+        print_string_flush "    Checking for the package and the runtime";
+        match !runtime_system with
+            | Directory_runtime _ ->
+                print_newline ();
+                print_string
+                    ("    Configuring is only supported on a native runtime " ^
+                    "system");
+                print_failed ();
+                None
+            | Native_runtime ->
+        match select_status_tuple_by_name status name with
+            | None ->
+                print_newline ();
+                print_string "    Package not found";
+                print_failed ();
+                None
+            | Some (pkg, reason, pstate) ->
+                match pstate with
+                    | Installing
+                    | Configured
+                    | Changing
+                    | Changing_unconf
+                    | Removing
+                    | Removing_unconf ->
+                        print_newline ();
+                        print_string
+                            ("    Package in invalid state \"" ^
+                            string_of_installation_status pstate ^ "\"");
+                        print_failed ();
+                        None
+                    | Installed
+                    | Configuring ->
+                        print_ok ();
+                        Some ((pkg, reason, pstate), status)
+    in
+
+    let mark_change
+        (pkg : pkg)
+        (reason : installation_reason)
+        (status : status option) =
+
+        match status with None -> None | Some status ->
+        print_string_flush "    Marking change in status";
+        let status =
+            update_status_tuple status (pkg, reason, Configuring)
+        in
+        match write_status status with
+            | false ->
+                print_failed ();
+                None
+            | true ->
+                print_ok ();
+                Some status
+    in
+
+    let commit_change
+        (pkg : pkg)
+        (reason : installation_reason)
+        (status : status option) =
+
+        match status with None -> None | Some status ->
+        print_string_flush "    Commiting change to status";
+        let status =
+            update_status_tuple status (pkg, reason, Configured)
+        in
+        match write_status status with
+            | false ->
+                print_failed ();
+                None
+            | true ->
+                print_ok ();
+                Some status
+    in
+
+    match check name (Some status) with
+        | None -> None
+        | Some ((pkg, reason, pstate), status) ->
+    mark_change pkg reason (Some status)
+    |> execute_packaging_script_if_exists name Tpm_config.configuresh_name
+    |> commit_change pkg reason
 
 (* let upgrade_package status repo pkg =
     print_endline ("Upgrade: not supported yet (package \"" ^

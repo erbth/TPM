@@ -367,6 +367,12 @@ let hashtbl_keys ht =
         ht
         []
 
+let hashtbl_kv_pairs ht =
+    Hashtbl.fold
+        (fun k v l -> (k, v)::l)
+        ht
+        []
+
 let path_remove_double_slash str =
     let rec work pos lc dst =
         if String.length str > pos
@@ -430,6 +436,8 @@ let install_files (uid, gid) mode paths destination =
                     loop ()
         in
         loop ();
+        Unix.close in_fd;
+        Unix.close out_fd;
         Unix.chown dst uid gid
     in
     List.iter cp_file paths

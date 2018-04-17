@@ -42,22 +42,7 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
                         List.map (fun c -> (c, Some sp.sn)) cs
                     in
                     (n, cs, Auto, false))
-                sp.sdeps);
-        (* Add reverse edges to the dependencies *)
-        List.iter
-            (fun (n, _) ->
-                match Hashtbl.find_opt ig n with
-                    | None ->
-                        raise
-                            (Gp_exception
-                                ("Node \"" ^ n ^
-                                "\" was not added to the graph.\""))
-                    | Some (node, deps, dets) ->
-                        let dets =
-                            sp.sn :: dets
-                        in
-                        Hashtbl.replace ig n (node, deps, dets))
-            sp.sdeps
+                sp.sdeps)
     in
     let add_missing_package (cs : annotated_package_constraint list) =
         match
@@ -147,11 +132,6 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
                                                 | _ -> true)
                                     cs
                                 in
-                                let dets =
-                                    List.filter
-                                        (fun n -> n <> name)
-                                        dets
-                                in
                                 Hashtbl.replace
                                     ig
                                     n
@@ -230,6 +210,21 @@ and add_nodes_to_igraph
         (add_node_to_igraph cfg status ig)
         ncrrl
 
+let add_reverse_edges_to_igraph (ig : igraph) =
+    let process_node (name, (_, deps, _)) =
+        List.iter
+            (fun dn ->
+                match Hashtbl.find_opt ig dn with
+                    | None ->
+                        raise (Gp_exception "Package not in graph")
+                    | Some (node, deps, dets) ->
+                        Hashtbl.replace ig dn (node, deps, name::dets))
+            deps
+    in
+    List.iter
+        process_node
+        (hashtbl_kv_pairs ig)
+
 let build_igraph (cfg : configuration) (status : status) (ncrrl : ncrrl) =
     let ig = Hashtbl.create ~random:true 100
     in
@@ -250,6 +245,7 @@ let build_igraph (cfg : configuration) (status : status) (ncrrl : ncrrl) =
         in
         add_nodes_to_igraph cfg status ig existing_ncrrl;
         add_nodes_to_igraph cfg status ig ncrrl;
+        add_reverse_edges_to_igraph ig;
         Some ig
     with
         Gp_exception msg -> print_endline ("Depres: " ^ msg); None
@@ -265,8 +261,9 @@ let build_igraph (cfg : configuration) (status : status) (ncrrl : ncrrl) =
             ig
             [] *)
 
-let install_configure_from_igraph
-    (cfg : configuration) (status : status) (ig : igraph) =
+let install_from_igraph
+    (cfg : configuration) (ig : igraph) (status : status option) =
+    match status with None -> None | Some status ->
     let visited_set = Hashtbl.create 100
     in
     let rec process_child status name =
@@ -315,6 +312,133 @@ let install_configure_from_igraph
         process_child
         (Some status)
         (hashtbl_keys ig)
+
+let configure_from_igraph
+    (cfg : configuration) (ig : igraph) (status : status option) =
+    match status with None -> None | Some status ->
+
+    let visited_set =
+        Hashtbl.create ~random:true 100
+    in
+    let reset_dependents
+        (ig : igraph)
+        (status : status option) =
+
+        match status with None -> None | Some status ->
+        let visited_set =
+            Hashtbl.create ~random:true 100
+        in
+        let rec infect_parent (status : status option) (name : string) =
+            match status with None -> None | Some status ->
+            match Hashtbl.find_opt visited_set name with
+                | Some true -> Some status
+                | Some false
+                | None ->
+            match select_status_tuple_by_name status name with
+                | None ->
+                    print_endline "Depres: Package not in status";
+                    None
+                | Some (pkg, reason, Configured) ->
+                    Hashtbl.replace visited_set name true;
+                    let status =
+                        update_status_tuple status (pkg, reason, Configuring)
+                    in
+                    (match Hashtbl.find_opt ig name with
+                        | None ->
+                            print_endline "Depres: Package not in graph";
+                            None
+                        | Some (node, deps, dets) ->
+                    List.fold_left
+                        infect_parent
+                        (Some status)
+                        dets)
+                | Some (_, _, _) -> Some status
+            
+        in
+        let rec process_child
+            (status : status option)
+            ((name : string), (_, _, (dets : string list))) =
+
+            match status with None -> None | Some status ->
+            match Hashtbl.mem visited_set name with
+                | true -> Some status
+                | false -> visit_node name dets status
+
+        and visit_node (name : string) (dets : string list) (status : status) =
+            Hashtbl.add visited_set name false;
+            match select_status_tuple_by_name status name with
+                | None ->
+                    print_endline "Depres: Package not in status";
+                    None
+                | Some (_, _, pstate) ->
+            match pstate with
+                | Configured
+                | Changing_unconf
+                | Changing
+                | Installing
+                | Removing_unconf
+                | Removing -> Some status
+                | Installed
+                | Configuring ->
+                    List.fold_left
+                        infect_parent
+                        (Some status)
+                        dets
+        in
+        List.fold_left
+            process_child
+            (Some status)
+            (hashtbl_kv_pairs ig)
+    in
+    let rec process_child (status : status option) (name : string) =
+        match status with None -> None | Some status ->
+        match Hashtbl.mem visited_set name with
+            | true -> Some status
+            | false ->
+                visit_node name status
+    and visit_node (name : string) (status : status) =
+        Hashtbl.add visited_set name ();
+        match select_status_tuple_by_name status name with
+            | None ->
+                print_endline ("Depres: Package \"" ^ name ^
+                "\" not in status");
+                None
+            | Some (_, _, pstate) ->
+                match pstate with
+                    | Installing
+                    | Configured
+                    | Changing
+                    | Changing_unconf
+                    | Removing
+                    | Removing_unconf -> Some status
+                    | Installed
+                    | Configuring ->
+                        match Hashtbl.find_opt ig name with
+                            | None ->
+                                print_endline "Depres: Package not in graph";
+                                None
+                            | Some (_, deps, dets) ->
+                                let status =
+                                    List.fold_left
+                                        process_child
+                                        (Some status)
+                                        deps
+                                in
+                                elementary_configure_package name status
+    in
+    let status =
+        reset_dependents ig (Some status)
+    in
+    List.fold_left
+        process_child
+        status
+        (hashtbl_keys ig)
+
+let install_configure_from_igraph
+    (cfg : configuration) (status : status) (ig : igraph) =
+
+    install_from_igraph cfg ig (Some status)
+    |> configure_from_igraph cfg ig
 
 let print_igraph names =
     print_target ();

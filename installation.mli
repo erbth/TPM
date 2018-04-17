@@ -12,6 +12,9 @@ val elementary_change_package :
     configuration -> string -> version -> installation_reason ->
     repository -> status option -> status option
 
+val elementary_configure_package :
+    string -> status option -> status option
+
 (* val install_or_upgrade_package :
     status -> repository -> pkg -> installation_reason -> status option
 (val configure_package_if_possible : status -> string -> status option
