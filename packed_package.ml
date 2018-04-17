@@ -58,7 +58,7 @@ let unpack_files_to spkg destination exclude_files status =
                         String.sub fn 1 (String.length fn - 1)
                     else fn
                 in
-                "--exclude='" ^ fn ^ "'")
+                "--exclude=" ^ fn)
             exclude_files
         |>
         Array.of_list

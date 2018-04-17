@@ -75,7 +75,7 @@ let ignore_dependencies  = ref false
             with
                 Gp_exception -> None *)
 
-let install_packages_ui names =
+let install_packages_ui names reinstall =
     print_target ();
     match read_configuration () with
         | None -> false
@@ -96,13 +96,13 @@ let install_packages_ui names =
                         let cs =
                             List.map (fun c -> (c, None)) cs
                         in
-                        Some ((n, cs, Manual) :: a))
+                        Some ((n, cs, Manual, reinstall) :: a))
             (Some [])
             names
     with
         | None -> false
-        | Some ncrl ->
-    match build_igraph cfg status ncrl with
+        | Some ncrrl ->
+    match build_igraph cfg status ncrrl with
         | None -> false
         | Some ig ->
     install_configure_from_igraph cfg status ig
@@ -348,6 +348,9 @@ let cmd_mark_auto () = op_mark_auto := Some ()
 let op_show_version = ref None
 let cmd_show_version n = op_show_version := Some n
 
+let op_reinstall = ref None
+let cmd_reinstall () = op_reinstall := Some ()
+
 let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
     ("--target", String cmd_runtime_system, "Root of the managed system's filesystem");
@@ -367,6 +370,8 @@ let cmd_specs = [
     ("--remove-dependencies", Unit cmd_remove_dependencies, "Remove all dependencies");
     ("--pack", Unit cmd_pack, "Create the packed/transport form of the package");
     ("--install", Unit cmd_install, "Install or uprade the specified packages");
+    ("--reinstall", Unit cmd_reinstall, "Like install but reinstalls the specified " ^
+        "packages even if the same version is already installed");
     ("--policy", String cmd_policy, "Show the installed and available versions of name");
     ("--show-version", String cmd_show_version, "Print a package's version number " ^
         "or `---' if it is not installed");
@@ -398,7 +403,8 @@ let cmd_anon a =
         !remove = Some () ||
         !installation_graph = Some () ||
         !op_mark_manual = Some () ||
-        !op_mark_auto = Some ()
+        !op_mark_auto = Some () ||
+        !op_reinstall = Some ()
     then anon_args := (a::(!anon_args |> List.rev)) |> List.rev
     else(print_endline ("Invalid option \"" ^ a ^ "\""); exit 2)
 
@@ -425,6 +431,7 @@ let check_cmdline () =
         PolyUnitOption !op_mark_manual;
         PolyUnitOption !op_mark_auto;
         PolyStringOption !op_show_version;
+        PolyUnitOption !op_reinstall;
     ]
     in
     match
@@ -469,7 +476,11 @@ let main () =
     | None -> match !install with
         Some () -> if !anon_args = []
             then (print_endline "--install requires an argument"; exit 2)
-            else if install_packages_ui !anon_args then exit 0 else exit 1
+            else if install_packages_ui !anon_args false then exit 0 else exit 1
+    | None -> match !op_reinstall with
+        | Some () -> if !anon_args = []
+            then (print_endline "--reinstall requires an argument"; exit 2)
+            else if install_packages_ui !anon_args true then exit 0 else exit 1
     | None -> match !policy with
         | Some n -> (* if show_policy n then exit 0 else *) exit 1
     | None -> match !remove with

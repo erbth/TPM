@@ -134,13 +134,27 @@ let determine_files_to_exclude (spkg : static_pkg) (status : status option) =
         print_string_flush "    Determining wich config files must be excluded";
         match
             List.fold_left
-                (fun (status, efs) (_, cf) ->
+                (fun (status, efs) (csum, cf) ->
                     match status with None -> (None, []) | Some status ->
-                    match file_status (form_target_path cf) with
-                        | Other_file -> print_newline (); print_string_flush
-                            ("    config file \"" ^ cf ^ "\" does already " ^
-                            "exist, hence not installing it");
-                            (Some status, cf::efs)
+                    let target_path =
+                        form_target_path cf
+                    in
+                    match file_status (target_path) with
+                        | Other_file ->
+                            (match sha512sum_of_file_opt target_path with
+                                | None -> (None, [])
+                                | Some is_sum ->
+                            match is_sum = csum with
+                                | true -> (Some status, efs)
+                                | false ->
+                            print_newline ();
+                            print_endline
+                                ("        config file \"" ^ cf ^ "\" does " ^
+                                "already exist and differs");
+                            print_string_flush
+                                ("        from the package's version, hence " ^
+                                "not installing it");
+                            (Some status, cf::efs))
                         | Non_existent -> (Some status, efs)
                         | Directory -> print_newline (); print_string_flush
                             ("    config file \"" ^ cf ^
@@ -501,7 +515,7 @@ let elementary_change_package cfg name version reason repo status =
         in
         let (added_cfiles, cfiles_to_remove) =
             sorted_bidirectional_difference
-                (fun (_, p1) (_, p2) -> compare_names p1 p2)
+                compare_cfile_pair
                 spkg.scfiles
                 old_spkg.scfiles
         in
@@ -568,7 +582,7 @@ let elementary_change_package cfg name version reason repo status =
     in
 
     let mark_change
-        (spkg : static_pkg)
+        (trans_spkg : static_pkg)
         (reason : installation_reason)
         (added_files, added_cfiles, added_dirs)
         ((excluded_files : string list), (status : status option)) =
@@ -576,16 +590,9 @@ let elementary_change_package cfg name version reason repo status =
         match status with None -> [], None | Some status ->
         print_string_flush "    Marking the change in status";
 
-        let spkg = {spkg with
-            sfiles = sorted_merge compare_names spkg.sfiles added_files;
-            scfiles = sorted_merge compare_names spkg.scfiles added_cfiles;
-            sdirs = sorted_merge compare_names spkg.sdirs added_dirs
-        }
-        in
-
         let status =
             update_status_tuple status
-                (dynamic_of_static_pkg spkg, reason, Changing)
+                (dynamic_of_static_pkg trans_spkg, reason, Changing)
         in
         if write_status status |> not then (print_failed (); [], None)
         else (print_ok (); (excluded_files, Some status))
@@ -614,15 +621,36 @@ let elementary_change_package cfg name version reason repo status =
     match split_files old_spkg spkg (Some status) with
         | None -> None
         | Some (added_fs_items, fs_items_to_remove, status) ->
-    let (added_files, _, _) =
+    let (added_files, added_cfiles, added_dirs) =
         added_fs_items
+    in
+    (* trans_spkg is the new package but with the old fs items extended by
+     * the new ones therefore not overwriting cfiles' checksums *)
+    let trans_spkg =
+        {spkg with
+            sfiles = sorted_merge compare_names old_spkg.sfiles added_files;
+            scfiles = sorted_merge compare_cfile_pair old_spkg.scfiles added_cfiles;
+            sdirs = sorted_merge compare_names old_spkg.sdirs added_dirs}
+    in
+    (* oldconf_spkg is the new package but with the old checksums for previous
+     * conf files *)
+    let oldconf_spkg =
+        let cfiles =
+            List.map
+                (fun (c, p) ->
+                    match rassoc_opt p old_spkg.scfiles with
+                        | None -> (c, p)
+                        | Some c -> (c, p))
+                spkg.scfiles
+        in
+        {spkg with scfiles = cfiles}
     in
     change_unconfigure_package spkg.sn old_state (Some status)
     |> check_for_file_collisions
         "    Checking if any of the added files exist already"
         added_files
-    |> determine_files_to_exclude spkg
-    |> mark_change spkg reason added_fs_items
+    |> determine_files_to_exclude oldconf_spkg
+    |> mark_change trans_spkg reason added_fs_items
     |> unpack_files_to_filter spkg (
         match !runtime_system with
             | Native_runtime -> "/"

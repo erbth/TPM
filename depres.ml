@@ -9,9 +9,10 @@ open Installed_package
 
 (* type dependency_graph = (pkg, installation_reason * (repository * pkg) list) Hashtbl.t *)
 
+(* Worong_pkg (repository, sticky) *)
 type specific_igraph_node =
     Present_pkg of bool |
-    Wrong_pkg of repository |
+    Wrong_pkg of (repository * bool) |
     Missing_pkg of repository
 
 (* Installation reason, [(constraint, source)], infered version, hook *)
@@ -23,14 +24,15 @@ type igraph_node =
 (* Name, node, dependencies, dependents (reverse dependencies) *)
 type igraph = (string, igraph_node * string list * string list) Hashtbl.t
 
-type ncrl = (
+type ncrrl = (
     string *
     (package_constraint * string option) list *
-    installation_reason
+    installation_reason *
+    bool
 ) list
 
 let rec add_node_to_igraph (cfg : configuration) (status : status)
-    (ig : igraph) (name, constraints, reason) =
+    (ig : igraph) (name, constraints, reason, reinstall) =
 
     let add_dependencies (sp : static_pkg) =
         add_nodes_to_igraph cfg status ig
@@ -39,7 +41,7 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
                     let cs =
                         List.map (fun c -> (c, Some sp.sn)) cs
                     in
-                    (n, cs, Auto))
+                    (n, cs, Auto, false))
                 sp.sdeps);
         (* Add reverse edges to the dependencies *)
         List.iter
@@ -76,7 +78,8 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
         (s_pkg : pkg)
         (s_status : installation_status)
         (s_reason : installation_reason)
-        (cs : annotated_package_constraint list) =
+        (cs : annotated_package_constraint list)
+        (reinstall : bool) =
         let s_sp =
             match static_of_dynamic_pkg s_pkg with
                 | None ->
@@ -95,8 +98,11 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
                     (List.map (fun (c, _) -> c) cs)
                     cfg.a
             with
-                | Some (repo, sp) when compare_version sp.sv s_sp.sv <> 0 ->
-                    (sp, (reason, cs, sp.sv, Wrong_pkg repo))
+                | Some (repo, sp) when
+                    compare_version sp.sv s_sp.sv <> 0 || reinstall ->
+
+                    (sp, (reason, cs, sp.sv, Wrong_pkg (repo, reinstall)))
+
                 | Some _
                 | None ->
                     match
@@ -185,43 +191,50 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
             let cs =
                 merge_annotated_constraints cs constraints
             in
+            let reinstall =
+                match spec with
+                    | Present_pkg _ -> reinstall
+                    | Wrong_pkg (_, s) -> s || reinstall
+                    | Missing_pkg _ -> reinstall
+            in
             (match
-                cs_satisfied
+                not (cs_satisfied
                     v
-                    (List.map (fun (c,_) -> c) cs)
+                    (List.map (fun (c,_) -> c) cs)) ||
+                reinstall
             with
-                | true ->
+                | false ->
                     update_constraints_reason
                         (node, deps, dets)
                         nr
                         cs
-                | false ->
+                | true ->
                     (* Remove the node *)
                     remove_from_igraph ig name;
                     (* Add the node with the new parameters *)
-                    add_node_to_igraph cfg status ig (name, cs, nr))
+                    add_node_to_igraph cfg status ig (name, cs, nr, reinstall))
         | None ->
             (match select_status_tuple_by_name status name with
                 | None -> add_missing_package constraints
                 | Some (sp, sr, ss) ->
-                    add_installed_package sp ss sr constraints)
+                    add_installed_package sp ss sr constraints reinstall)
         (* | _ -> raise (Gp_exception "Not implemented yet") *)
 
 and add_nodes_to_igraph
     (cfg : configuration)
     (status : status)
     (ig : igraph)
-    (ncrl : ncrl) =
+    (ncrrl : ncrrl) =
 
     List.iter
         (add_node_to_igraph cfg status ig)
-        ncrl
+        ncrrl
 
-let build_igraph (cfg : configuration) (status : status) (ncrl : ncrl) =
+let build_igraph (cfg : configuration) (status : status) (ncrrl : ncrrl) =
     let ig = Hashtbl.create ~random:true 100
     in
     try
-        let existing_ncrl =
+        let existing_ncrrl =
             List.map
                 (fun (pkg, reason, pstate) ->
                     let name =
@@ -232,11 +245,11 @@ let build_igraph (cfg : configuration) (status : status) (ncrl : ncrl) =
                                     "Status tuple with package with no name")
                             | Some n -> n
                     in
-                    (name, [], reason))
+                    (name, [], reason, false))
                 (select_all_status_tuples status)
         in
-        add_nodes_to_igraph cfg status ig existing_ncrl;
-        add_nodes_to_igraph cfg status ig ncrl;
+        add_nodes_to_igraph cfg status ig existing_ncrrl;
+        add_nodes_to_igraph cfg status ig ncrrl;
         Some ig
     with
         Gp_exception msg -> print_endline ("Depres: " ^ msg); None
@@ -281,7 +294,7 @@ let install_configure_from_igraph
                             reason
                             repo
                             status
-                    | (reason, constraints, version, Wrong_pkg repo) ->
+                    | (reason, constraints, version, Wrong_pkg (repo, _)) ->
                         elementary_change_package
                             cfg
                             name
@@ -320,13 +333,13 @@ let print_igraph names =
                         let cs =
                             List.map (fun c -> (c, None)) cs
                         in
-                        Some ((n, cs, Manual)::a))
+                        Some ((n, cs, Manual, false)::a))
             (Some [])
             names
     with
         | None -> false
-        | Some ncrl ->
-    match build_igraph cfg status ncrl with
+        | Some ncrrl ->
+    match build_igraph cfg status ncrrl with
         | None -> false
         | Some ig ->
 
@@ -351,10 +364,12 @@ let print_igraph names =
                     string_of_installation_reason ir ^ ", " ^
                     string_of_cs cs ^ ", " ^
                     string_of_version v ^ ", " ^ string_of_bool rc ^ ")"
-                | (ir, cs, v, Wrong_pkg r) -> "Wrong_pkg (" ^ name ^ ", " ^
+                | (ir, cs, v, Wrong_pkg (r, s)) ->
+                    "Wrong_pkg (" ^ name ^ ", " ^
                     string_of_installation_reason ir ^ ", " ^
                     string_of_cs cs ^ ", " ^
-                    string_of_version v ^ ", _)"
+                    string_of_version v ^ ", (_, " ^
+                    string_of_bool s ^ "))"
                 | (ir, cs, v, Missing_pkg r) -> "Missing_pkg (" ^ name ^ ", " ^
                     string_of_installation_reason ir ^ ", " ^
                     string_of_cs cs ^ ", " ^

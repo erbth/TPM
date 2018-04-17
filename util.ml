@@ -165,7 +165,8 @@ let unopt = function
 let add_xml_descriptor = (^) "<?xml version=\"1.0\"?>\n"
 let xml_to_string_with_desc s = (Xml.to_string_fmt s |> add_xml_descriptor) ^ "\n"
 
-let compare_names a b = if a > b then 1 else (if a < b then -1 else 0)
+let compare_names (a : string) (b : string) =
+    if a > b then 1 else (if a < b then -1 else 0)
 
 let contains l e = List.exists (fun l -> l = e) l
 
@@ -180,8 +181,8 @@ let sorted_bidirectional_difference cmp l1 l2 =
     let rec work only_in_1 only_in_2 l1 l2 =
         match (l1, l2) with
             | ([], []) -> (only_in_1, only_in_2)
-            | (l::ls, []) -> work (l::only_in_1) only_in_2 l1 l2
-            | ([], l::ls) -> work only_in_1 (l::only_in_2) l1 l2
+            | (l1::l1s, []) -> work (l1::only_in_1) only_in_2 l1s []
+            | ([], l2::l2s) -> work only_in_1 (l2::only_in_2) [] l2s
 
             | (l1::l1s, l2::l2s) when cmp l1 l2 > 0 ->
                 work only_in_1 (l2::only_in_2) (l1::l1s) l2s
@@ -195,7 +196,7 @@ let sorted_bidirectional_difference cmp l1 l2 =
     let (only_in_1, only_in_2) =
         work [] [] l1 l2
     in
-    (List.rev only_in_1, only_in_2)
+    (List.rev only_in_1, List.rev only_in_2)
 
 let sorted_unique_insert cmp l e =
     let rec before e src dst =
@@ -447,3 +448,8 @@ module Perf_hash = struct
                 Hashtbl.add ht x num;
                 ((num + 1, ht), num)
 end
+
+let rec rassoc_opt b = function
+    | [] -> None
+    | (la, lb)::ls ->
+        if lb = b then Some la else rassoc_opt b ls

@@ -302,3 +302,9 @@ let compare_pkgs_by_name pkg1 pkg2 =
 
 let compare_deps (n1,_) (n2,_) =
     compare_names n1 n2
+
+let compare_cfile_pair
+    ((chk1 : string), (n1 : string))
+    ((chk2 : string), (n2 : string)) =
+    
+    compare_names n1 n2
