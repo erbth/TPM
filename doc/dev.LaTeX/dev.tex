@@ -45,13 +45,9 @@
 		
 		The name 'destdir' originates in the Make variable \variable{DESTDIR} that can be used to install software that is built with GNU Autotools to a different directory.
 		
-		\item[\file{postinst.sh}] This script will be executed after the package's files are installed. Its semantic must be independent of the working directory it is executed in. The script is executed with \variable{TPM\_TARGET} as working directory. The same is required for the other two scripts.
-		
-		\item[\file{prerm.sh}] This script will be executed before the package's files are removed. Any file that was generated in \file{postinst.sh} must be removed in this script. Since a package can be removed without a repository that hosts it, this script is copied to \file{/var/lib/tpm/<package-name>/prerm.sh} during installation. When the package is removed forcefully, this script is executed as well. Therefore, it must respect this situation, in which not all of its files might have been installed.
-		
-		\item[\file{preupdate.sh}] This script will be executed before any files of the packages old version are removed or any new ones are installed. It must guaranty that no files except config files that differ from those shipped with the package stay back when the package is removed.
-		
 		\item[\file{configure.sh}] This script is executed after all runtime dependencies of the package were installed, and if \program{tpm} is invoked with \file{/} as target system (e.g. in a chroot-environment or on a real system).
+		
+		\item[\file{unconfigure.sh}] \dots
 	\end{description}
 
 	\paragraph{packed/transport:}
@@ -61,13 +57,9 @@
 		
 		\item[\file{destdir.tar.gz}] Gzipped tar archive of \file{destdir}. I choose Gzip because with Pigz a fully compatible parallel implementation exists.
 		
-		\item[\file{postinst.sh}] '\file{postinst.sh}'
-		
-		\item[\file{prerm.sh}] '\file{prerm.sh}'
-		
-		\item[\file{preupdate.sh}] '\file{preupdate.sh}'
-		
 		\item[\file{configure.sh}] '\file{configure.sh}'
+		
+		\item[\file{unconfigure.sh}] '\file{unconfigure.sh}'
 	\end{description}
 	
 	\noindent
@@ -104,7 +96,7 @@
 		
 		\green{\texttt{-{}-mark-manual <name1>, \dots}} & Mark the specified packages as manually installed \\
 		
-		\green{\texttt{-{}-remove <name1>, \dots}} & Remove the specified packages and their config files if they were not modified \\
+		\green{\texttt{-{}-remove <name1>, \dots}} & Remove the specified packages and their config files if they were not modified. If other packages depend on a package which is to be removed, these are removed first without asking the user for confirmation. \\
 		
 		\texttt{-{}-auto-remove} & Remove all packages that were marked as automatically installed but are not required by other packages that are marked as manually installed \\
 		
@@ -131,10 +123,6 @@
 	\def\arraystretch{1.5}
 	\begin{tabularx}{\textwidth}{lX}
 		\texttt{-{}-target} & Root of the system which is managed; This can be specified with the environment variable \variable{TPM\_TARGET}, however \texttt{-{}-target} precedes. \\
-		
-		\texttt{-{}-ignore-dependencies} & Do not respect the package's dependencies during installation, removal or upgrade \\
-		
-		\texttt{-{}-ignore-noncritical} & Ignore non critical problems \\
 	\end{tabularx}
 	\egroup
 	
@@ -149,8 +137,7 @@
 		\item Packages of which runtime dependencies are not installed or not configured
 	\end{itemize}
 
-	\paragraph{Noncritical problems} Noncritical problems can be ignored and changes to the system's state be made by passing the \texttt{-{}-ignore-noncritical} parameters. They are:
-	
+	\paragraph{Noncritical problems}
 	\noindent
 	\begin{itemize}
 		\item Dependency violations
@@ -205,11 +192,9 @@
 		\variable{TPM\_TARGET} & Specifies the runtime system's root directory; May be overwritten by \texttt{-{}-target} \\
 		
 		\variable{TPM\_PROGRAM\_SHA512SUM} & The \program{sha512sum} compatible program to use for generating the hash sums of files \\
-		
+
 		\variable{TPM\_PROGRAM\_TAR} & The Tar compatible archiver to use for packing/unpacking the packages \\
-		
-		\variable{TPM\_PROGRAM\_CD} & The \program{cd} compatible program to use for changing the current working directory \\
-		
+
 		\variable{TPM\_PROGRAM\_GZIP} & The Gzip compatible compression program to use for compressing packages \\
 	\end{tabularx}
 	\egroup

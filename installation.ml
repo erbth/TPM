@@ -165,7 +165,7 @@ let determine_files_to_exclude (spkg : static_pkg) (status : status option) =
                             cf ^ "\"");
                             (None, []))
                 (Some status, [])
-                (spkg.scfiles)
+                (List.rev spkg.scfiles)
         with
             | (None, _) -> print_failed (); ([], None)
             | (Some status, l) -> print_ok (); (l, Some status)
@@ -377,61 +377,6 @@ let unconfigure_package (name : string) (status : status option) =
         name
         Tpm_config.unconfiguresh_name
         (Some status)
-
-(* let execute_packaging_script_filter spkg scriptname status =
-    match status with None -> None | Some status ->
-    let script =
-        Tpm_config.package_info_location ^ "/" ^ spkg.sn ^ "/" ^
-        scriptname
-        |> form_target_path
-    in
-    try 
-        if Sys.file_exists script
-        then
-            (* This flushes the standard output *)
-            (print_endline ("    Executing " ^ scriptname);
-            print_string    "                               ";
-            if Sys.command
-                (!program_cd ^ " " ^ !runtime_system ^ " && " ^ script)
-                = 0
-            then (print_ok (); Some status)
-            else (print_failed (); None))
-        else
-            (print_endline ("    This package has no " ^ scriptname ^ ".");
-            Some status)
-    with
-        | Sys_error msg -> print_endline
-            ("    Executing " ^ scriptname ^ " failed: " ^ msg);
-            print_failed ();
-            None
-        | _ -> print_endline ("    Executing " ^ scriptname ^ " failed");
-            print_failed ();
-            None
-
-let reset_configured_dependent_packages_filter name status =
-    match status with None -> None | Some status ->
-    print_endline "    Resetting dependent packages to state installed";
-    let configured_dep_names =
-        get_dependent_package_names
-            (fun (p,r,s) -> is_configured_of_state s)
-            status
-            name
-    in
-    List.fold_left
-        (fun status n ->
-            match status with None -> None | Some status ->
-            match select_status_tuple_by_name status n with
-                | None -> None
-                | Some (p,r,s) ->
-                    print_endline ("        " ^ string_of_pkg p);
-                    Some (update_status_tuple status (p, r, Installed)))
-        (Some status)
-        configured_dep_names
-    |> (fun s ->
-        print_string "        ";
-        match s with
-            | Some s -> print_ok (); Some s
-            | None -> print_failed (); None) *)
 
 (* Install a package from a specific repository and mark it with a specific
  * reason for installing it. *)
@@ -783,220 +728,126 @@ let elementary_configure_package (name : string) (status : status option) =
         | Some ((pkg, reason, pstate), status) ->
     mark_change pkg reason (Some status)
     |> execute_packaging_script_if_exists name Tpm_config.configuresh_name
-    |> commit_change pkg reason
+    |> commit_change pkg reason        
 
-(* let upgrade_package status repo pkg =
-    print_endline ("Upgrade: not supported yet (package \"" ^
-        (string_of_pkg pkg) ^ "\""); None
-
-let install_packages
-    (status : status)
-    (nvrl : (string * version * installation_reason) list) =
-    let ig =
-        build_dependency_graph nvrl
-    in
-    raise (Critical_error "Not implemented 4")
-
-let install_or_upgrade_package status repo pkg reason =
-    match (pkg.t, pkg.n, pkg.v, pkg.a) with
-        | (Some t, Some n, Some v, Some a) ->
-            (match select_status_tuple_by_name status n with
-                | None -> install_package status repo pkg reason
-                | Some (ipkg,preason,pstatus) ->
-                    if ipkg.v <> Some v then upgrade_package status repo pkg
-                    else
-                    match reason with
-                        | Auto -> Some status
-                        | Manual ->
-                            if preason = Manual
-                            then (print_endline
-                                ("\"" ^ n ^ "\"=" ^ (string_of_version v) ^
-                                " is already installed."); Some status)
-                            else (print_string
-                                ("\"" ^ n ^ "\"=" ^ (string_of_version v) ^
-                                " was automatically installed already, " ^
-                                "marking it as manually installed");
-                                let status =
-                                    update_status_tuple_installation_reason
-                                        status n Manual
-                                in
-                                match
-                                    write_status status
-                                with
-                                    | true -> print_ok (); Some status
-                                    | false -> print_failed (); None))
-        | _ ->
-            print_endline "Installation: Invalid package"; None
-
-let configure_package status name =
-    print_endline ("Configuring package \"" ^ name ^ "\"");
-
-    let configure_check_target_filter status =
-        print_string "    Checking if the target system is \"/\"";
-        match !runtime_system with
-            | "/" -> print_ok (); Some status
-            | _ -> print_failed (); None
-    in
-    let configure_mark_change_filter name status =
-        match status with None -> (None, None) | Some status ->
-        print_string "    Marking change in status";
-        match select_status_tuple_by_name status name with
-            | None -> print_newline (); print_string
-                ("Configure: Package \"" ^ name ^ "\" is not installed.");
-                print_failed (); (None, None)
-            | Some (p,r,s) when s = Installed ->
-                (let status = update_status_tuple status (p,r,Configuration)
-                in
-                match write_status status with
-                    | true -> print_ok (); (Some status, static_of_dynamic_pkg p)  
-                    | false -> print_failed (); (None, None))
-            | _ -> print_newline (); print_string
-                ("Configure: Package \"" ^ name ^ "\" is not in state installed");
-                print_failed (); (None, None)
-    in
-    let configure_confirm_change_filter name status =
-        match status with None -> None | Some status ->
-        print_string "    Confirming change in status";
-        match select_status_tuple_by_name status name with
-            | None -> print_failed (); None
-            | Some (p,r,s) ->
-                let status =
-                    update_status_tuple status (p, r, Configured)
-                in
-                match write_status status with
-                    | true -> print_ok (); Some status
-                    | false -> print_failed (); None
-    in
-
-    match
-        configure_check_target_filter status
-        |> configure_mark_change_filter name
-    with
-        | (Some status, Some spkg) ->
-            execute_packaging_script_filter spkg
-                Tpm_config.configuresh_name (Some status)
-            |> configure_confirm_change_filter name
-        | _ -> None
-
-let configure_package_if_possible status name =
-    match select_status_tuple_by_name status name with
-        | None -> print_endline ("Configure_if_possible: Unknown package \"" ^
-            name ^ "\""); None
-        | Some (p,r,s) when s = Installed ->
-            (match List.exists
-                (fun n -> not (is_pkg_name_installed status n))
-                p.rdeps
-            with
-                | true -> Some status
-                | false -> match !runtime_system with
-                    | "/" -> configure_package status name
-                    | _ -> Some status)
-        | _ -> Some status
-
-let configure_packages_if_possible_filter names status =
-    List.fold_left
-        (fun status n ->
-            match status with None -> None | Some status ->
-            configure_package_if_possible status n)
-        status
-        names
-
-let configure_all_packages_filter status =
+let elementary_remove_package (name : string) (status : status option) =
     match status with None -> None | Some status ->
-    List.fold_left
-        (fun status (p,r,ps) ->
-            match status with None -> None | Some status ->
-            match p.n with
-                | None -> Some status
-                | Some n -> configure_package_if_possible status n)
-        (Some status)
-        (select_status_tuple_by_predicate
-            (fun (_,_,s) -> s = Installed)
-            status)
-
-let configure_all_packages status =
-    configure_all_packages_filter (Some status)
-        
-
-let remove_package status name =
-    match select_status_tuple_by_name status name with
-        | None -> print_endline ("Removal: Package \"" ^ name ^
-            "\" is not installed"); None
-        | Some (pkg, preason, pstate) ->
     print_endline ("Removing package \"" ^ name ^ "\":");
-
-    let pkg_info_location =
-        form_target_path (Tpm_config.package_info_location ^ "/" ^ name)
-    in
-
-    print_string "    Marking removal in status";
-    let status = update_status_tuple status (pkg, preason, Removal)
-    in
-    if write_status status |> not then (print_failed (); None)
-    else
-    (print_ok ();
-
-    print_string "    Looking for a prerm script";
-    let prermsh_tmp_path =
-        Tpm_config.tmp_dir ^ "/" ^ Tpm_config.prermsh_name
-    in
-    let prermshgz_path =
-        pkg_info_location ^ "/" ^ Tpm_config.prermsh_name ^ ".gz"
-    in
-    let s =
-        match file_status prermshgz_path with
-            | Read_error -> print_newline (); print_string
-                ("    can not read \"" ^ prermshgz_path ^ "\"");
-                print_failed (); false
-            | Directory -> print_newline (); print_string
-                ("    \"" ^ prermshgz_path ^ "\"is a directory");
-                print_failed (); false
-            | Non_existent -> print_ok (); print_endline
-                "    This package has no prerm script"; true
-            | Other_file ->
-                print_ok ();
-                print_string "    Executing the prerm script";
-                match create_tmp_dir () with false -> false | true ->
-                let unzip_prermsh_cmd =
-                    !program_gzip ^ " -cd " ^ prermshgz_path ^ " > " ^
-                    prermsh_tmp_path
-                in
-                try
-                    if Sys.command unzip_prermsh_cmd = 0
-                    then
-                        (Unix.chmod prermsh_tmp_path 0o755;
-                        if Sys.command prermsh_tmp_path = 0
-                        then (print_ok (); true)
-                        else (print_failed (); false))
-                    else
-                        (print_newline (); print_string
-                        "    unzipping the prerm script failed";
-                        print_failed (); false)
-                with
-                    | Unix.Unix_error (c,_,_) -> print_newline (); print_string
-                        ("    " ^ Unix.error_message c); print_failed (); false
-                    | Sys_error msg -> print_newline (); print_string
-                        ("    " ^ msg); print_failed (); false
-                    | _ -> print_failed (); false
-    in
-    match s with false -> None | true ->
-
-    let remove_from_status status =
+    
+    let retrieve_package (name : string) (status : status option) =
         match status with None -> None | Some status ->
-        print_string "    Removing package from status";
-        let status = delete_status_tuple status (pkg, preason, Removal)
-        in
-        if write_status status |> not then (print_failed (); None)
-        else (print_ok (); Some status)
+        print_string_flush "    Retrieving the package from status";
+        match select_status_tuple_by_name status name with
+            | None ->
+                print_failed ();
+                None
+            | Some (pkg, reason, pstate) ->
+                match static_of_dynamic_pkg pkg with
+                    | None ->
+                        print_newline ();
+                        print_string "    Invalid package in status";
+                        print_failed ();
+                        None
+                    | Some spkg ->
+                        print_ok ();
+                        Some (spkg, reason, pstate, status)
     in
-    Some status
-    |> remove_pkg_info_location
-    |> remove_from_status
-    )
-    )
-    )
 
-let show_policy name =
+    let remove_unconfigure_package
+        (name : string)
+        (pkg_state : installation_status)
+        (status : status option) =
+
+        let mark_unconfigure (name : string) (status : status option) =
+            match status with None -> None | Some status ->
+            print_string_flush "    Marking unconfiguration in status";
+            match select_status_tuple_by_name status name with
+                | None ->
+                    print_newline ();
+                    print_string "    The package disappeared from status";
+                    print_failed ();
+                    None
+                | Some (pkg, reason, _) ->
+                    let status =
+                        update_status_tuple status
+                            (pkg, reason, Removing_unconf)
+                    in
+                    match write_status status with
+                        | false -> print_failed (); None
+                        | true -> print_ok (); Some status
+        in
+
+        match status with None -> None | Some status ->
+        match pkg_state with
+            | Installing
+            | Installed
+            | Changing
+            | Removing -> Some status
+            | Configured
+            | Configuring
+            | Changing_unconf
+            | Removing_unconf ->
+
+        (* Check if the runtime system is native before changing the
+         * system's state *)
+        match !runtime_system with
+            | Directory_runtime _ ->
+                print_string
+                    ("    The package needs to be unconfigured but the " ^
+                    "runtime system is not native.");
+                print_failed ();
+                None
+            | Native_runtime ->
+
+        mark_unconfigure name (Some status)
+        |> unconfigure_package name
+    in
+
+    let mark_removal
+        (spkg : static_pkg)
+        (reason : installation_reason)
+        (status : status option) =
+
+        match status with None -> None | Some status ->
+        print_string_flush "    Marking removal in status";
+        let status =
+            update_status_tuple status
+                (dynamic_of_static_pkg spkg, reason, Removing)
+        in
+        match write_status status with
+            | false -> print_failed (); None
+            | true -> print_ok (); Some status
+    in
+
+    let commit_removal
+        (spkg : static_pkg)
+        (reason : installation_reason)
+        (status : status option) =
+
+        match status with None -> None | Some status ->
+        print_string_flush "    Removing package from status";
+        let status =
+            delete_status_tuple status
+                (dynamic_of_static_pkg spkg, reason, Removing)
+        in
+        match write_status status with
+            | false -> print_failed (); None
+            | true -> print_ok (); Some status
+    in
+
+    match retrieve_package name (Some status) with
+        | None -> None
+        | Some (spkg, reason, pstate, status) ->
+    let fs_items_to_remove =
+        (spkg.sfiles, spkg.scfiles, spkg.sdirs)
+    in
+    remove_unconfigure_package name pstate (Some status)
+    |> mark_removal spkg reason
+    |> remove_fs_items fs_items_to_remove
+    |> remove_pkg_info_location spkg
+    |> commit_removal spkg reason
+
+(* let show_policy name =
     print_target ();
     match read_configuration () with
         | None -> false

@@ -171,13 +171,13 @@ let compare_names (a : string) (b : string) =
 let contains l e = List.exists (fun l -> l = e) l
 
 (* Difference of sorted lists: l1 \ l2 *)
-let sorted_difference cmp l1 l2 =
+let sorted_difference cmp (l1 : 'a) (l2 : 'a) =
     List.filter
         (fun e -> not (contains l2 e))
         l1
 
 (* Isolate files which are only in one of the given lists *)
-let sorted_bidirectional_difference cmp l1 l2 =
+let sorted_bidirectional_difference cmp (l1 : 'a) (l2 : 'a) =
     let rec work only_in_1 only_in_2 l1 l2 =
         match (l1, l2) with
             | ([], []) -> (only_in_1, only_in_2)

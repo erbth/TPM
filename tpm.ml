@@ -10,9 +10,6 @@ open Configuration
 open Status
 open Depres
 
-let ignore_noncritical = ref false
-let ignore_dependencies  = ref false
-
 (* let install_packages_filter ignore_noncritical ignore_deps names status =
     match status with None -> None | Some status ->
     match read_configuration () with
@@ -106,6 +103,32 @@ let install_packages_ui names reinstall =
         | None -> false
         | Some ig ->
     install_configure_from_igraph cfg status ig
+    |> bool_of_option
+
+let remove_packages_ui names =
+    print_target ();
+    match read_configuration () with
+        | None -> false
+        | Some cfg ->
+    match read_status () with
+        | None -> false
+        | Some status ->
+    let names =
+        List.filter
+            (fun name ->
+                match select_status_tuple_by_name status name with
+                    | Some _ -> true
+                    | None ->
+                        print_endline
+                            ("Package \"" ^ name ^
+                            "\" is not installed.");
+                        false)
+            names
+    in
+    match build_igraph cfg status [] with
+        | None -> false
+        | Some ig ->
+    remove_from_igraph status ig names
     |> bool_of_option
 
 let mark_manual_ui names =
@@ -354,9 +377,6 @@ let cmd_reinstall () = op_reinstall := Some ()
 let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
     ("--target", String cmd_runtime_system, "Root of the managed system's filesystem");
-    ("--ignore-noncritical", Set ignore_noncritical, "Ignore noncritical problems");
-    ("--ignore-dependencies", Set ignore_dependencies, "Do not respect the " ^
-        "package's dependencies during installation, removal or upgrade");
     ("--create-desc", String cmd_create_desc,
         "Create desc.xml with package type and destdir in the current working " ^
         "directory");
@@ -484,9 +504,9 @@ let main () =
     | None -> match !policy with
         | Some n -> (* if show_policy n then exit 0 else *) exit 1
     | None -> match !remove with
-        Some () -> (* if !anon_args = []
+        Some () -> if !anon_args = []
             then (print_endline "--remove requires an argument"; exit 2)
-            else if remove_packages_ui !anon_args then exit 0 else *) exit 1
+            else if remove_packages_ui !anon_args then exit 0 else exit 1
     | None -> match !list_installed with
         | Some () -> if list_installed_packages () then exit 0 else exit 1
     | None -> match !show_problems with

@@ -438,7 +438,50 @@ let install_configure_from_igraph
     (cfg : configuration) (status : status) (ig : igraph) =
 
     install_from_igraph cfg ig (Some status)
-    |> configure_from_igraph cfg ig
+    |>
+    match !runtime_system with
+        | Native_runtime -> configure_from_igraph cfg ig
+        | Directory_runtime _ -> fun x -> x
+
+let remove_from_igraph (status : status) (ig : igraph) (names : string list) =
+    let visited_set =
+        Hashtbl.create ~random:true 100
+    in
+    let rec process_parent (status : status option) (name : string) =
+        match status with None -> None | Some status ->
+        match Hashtbl.mem visited_set name with
+            | true -> Some status
+            | false -> visit_child name status
+
+    and visit_child (name : string) (status : status) =
+        Hashtbl.add visited_set name ();
+        match Hashtbl.find_opt ig name with
+            | None ->
+                print_endline "Depres: Package not in graph";
+                None
+            | Some (_, _, dets) ->
+        let status =
+            List.fold_left
+                process_parent
+                (Some status)
+                dets
+        in
+        match status with
+            | None -> None
+            | Some status ->
+        match select_status_tuple_by_name status name with
+            | None ->
+                print_endline
+                    ("Package \"" ^ name ^
+                    "\" is not installed hence not removing it.");
+                Some status
+            | Some _ ->
+        elementary_remove_package name (Some status)
+    in
+    List.fold_left
+        process_parent
+        (Some status)
+        names
 
 let print_igraph names =
     print_target ();
