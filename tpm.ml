@@ -2,75 +2,12 @@ open Arg
 open Util
 open Pkg
 open Unpacked_package
-(* open Packed_package *)
 open Installed_package
-(* open Repository_search
-open Installation *)
+open Repository
+open Repository_search
 open Configuration
 open Status
 open Depres
-
-(* let install_packages_filter ignore_noncritical ignore_deps names status =
-    match status with None -> None | Some status ->
-    match read_configuration () with
-        | None -> None
-        | Some cfg ->
-    let rps =
-        find_and_select_packages_in_all_repos cfg names
-    in
-    match rps with None -> None | Some rps ->
-    match check_installation status true with
-        | Critical ->
-            print_endline "Critical problems prevent the installation"; None
-        | Non_critical when not ignore_noncritical ->
-            print_endline "Noncritical problems prevent the installation"; None
-        | Non_critical
-        | No_problem ->
-            let rprs = List.map (fun (r, p) -> (r, p, Manual)) rps
-            in
-            let remove_configured_pkgs u_pkgs status =
-                match status with None -> (None, []) | Some status->
-                List.fold_left
-                    (fun (status, l) n ->
-                        match status with None -> (None, []) | Some status ->
-                        if is_pkg_name_configured status n
-                        then (Some status, l)
-                        else (Some status, n::l))
-                    (Some status, [])
-                    u_pkgs
-            in
-            let unconfigured_pkgs =
-                select_status_tuple_by_predicate
-                    (fun (_,_,s) -> s = Installed)
-                    status
-                |> List.map (fun (p,_,_) -> unopt p.n)
-            in
-            try
-                let rprs =
-                    if not ignore_deps
-                    then
-                        let g =
-                            dependency_graph_of_repo_package_reason_list
-                                cfg
-                                rprs
-                        in
-                        derive_installation_order_from_graph g rps
-                    else rprs
-                in
-                List.fold_left
-                    (fun (s, unconfigured_pkgs) (r,p,ir) ->
-                        match s with None -> (None, []) | Some s ->
-                        let unconfigured_pkgs =
-                            unconfigured_pkgs @ [unopt p.n]
-                        in
-                        install_or_upgrade_package s r p ir
-                        |> configure_packages_if_possible_filter unconfigured_pkgs
-                        |> remove_configured_pkgs unconfigured_pkgs)
-                    (Some status, unconfigured_pkgs)
-                    rprs
-                |> fst
-            with
-                Gp_exception -> None *)
 
 let install_packages_ui names reinstall =
     print_target ();
@@ -131,6 +68,23 @@ let remove_packages_ui names =
     remove_from_igraph status ig names
     |> bool_of_option
 
+let remove_unneeded_packages_ui () =
+    print_target ();
+    match read_configuration () with
+        | None -> false
+        | Some cfg ->
+    match read_status () with
+        | None -> false
+        | Some status ->
+    match build_igraph cfg status [] with
+        | None -> false
+        | Some ig ->
+    match unneeded_packages_from_igraph ig with
+        | None -> false
+        | Some names ->
+    remove_from_igraph status ig names
+    |> bool_of_option
+
 let mark_manual_ui names =
     List.fold_left
         (fun status name ->
@@ -147,40 +101,7 @@ let mark_auto_ui names =
         names
     |> bool_of_option
 
-(* let remove_packages_filter ignore_noncritical ignore_deps names status =
-    match status with None -> None | Some status ->
-    match check_installation status true with
-        | Critical ->
-            print_endline "Critical problems prevent from removing"; None
-        | Non_critical when not ignore_noncritical ->
-            print_endline "Noncritical problems prevent from removing"; None
-        | Non_critical
-        | No_problem ->
-    let names =
-        List.fold_left
-            (fun ns n ->
-                match select_status_tuple_by_name status n with
-                    | None -> print_endline
-                        ("Package " ^ n ^ " is not installed");
-                        ns
-                    | Some _ -> n::ns)
-            []
-            names
-        |> List.rev
-    in
-    List.fold_left
-        (fun s name -> match s with None -> None | Some s ->
-            remove_package s name)
-        (Some status)
-        names
-
-let remove_packages_ui names =
-    print_target();
-    read_status ()
-    |> remove_packages_filter !ignore_noncritical !ignore_dependencies names
-    |> bool_of_option
-
-let recover_from_dirty_state () =
+(* let recover_from_dirty_state () =
     print_target ();
     match read_configuration () with None -> false | Some cfg ->
     match read_status () with None -> false | Some status ->
@@ -274,6 +195,60 @@ let recover_from_dirty_state () =
     |> configure_all_packages_filter
     |> check_installation_filter *)
 
+let show_policy name =
+    print_target ();
+    match read_configuration () with
+        | None -> false
+        | Some cfg ->
+    match read_status () with
+        | None -> false
+        | Some status ->
+    match pkg_name_constraints_of_string name with
+        | None -> false
+        | Some (name, cs) ->
+    let ncrrl =
+        [(name, List.map (fun c -> (c, None)) cs, Manual, false)]
+    in
+    let vroti =
+        match build_igraph cfg status ncrrl with
+            | None -> None
+            | Some ig ->
+        version_repo_to_install_from_igraph ig name
+    in
+    let rsps =
+        find_and_filter_package_in_all_repos name cs cfg.a
+    in
+    let ist =
+        select_status_tuple_by_name status name
+    in
+    let string_of_vroti (v, r) =
+        string_of_version v ^
+        match r with
+            | None -> ""
+            | Some r -> " from " ^ string_of_repository r
+    in
+    let string_of_rsp (r, sp) =
+        string_of_version sp.sv ^
+        " from " ^ string_of_repository r
+    in
+    let string_of_st (p,r,_) =
+        (match p.v with None -> "???" | Some v -> string_of_version v) ^
+        " (" ^ (string_of_installation_reason r) ^ ")"
+    in
+    print_endline ("Policy for package \"" ^ name ^ "\":");
+    print_endline ("  Installed instance:  " ^
+        match ist with
+            | None -> "---"
+            | Some t -> string_of_st t);
+    print_endline ("  Instance to install: " ^
+        match vroti with
+            | None -> "---"
+            | Some vro -> string_of_vroti vro);
+    print_endline
+        ("  All available instances for architectur " ^
+        string_of_arch cfg.a ^ ":");
+    List.iter (fun rsp -> print_endline ("    " ^ string_of_rsp rsp)) rsps;
+    true
 
 (* User interface *)
 let version_msg =
@@ -359,8 +334,8 @@ let cmd_recover () = recover := Some ()
 let installation_graph = ref None
 let cmd_installation_graph () = installation_graph := Some ()
 
-let reverse_dependencies = ref None
-let cmd_reverse_dependencies s = reverse_dependencies := Some s
+let op_reverse_dependencies = ref None
+let cmd_reverse_dependencies s = op_reverse_dependencies := Some s
 
 let op_mark_manual = ref None
 let cmd_mark_manual () = op_mark_manual := Some ()
@@ -373,6 +348,9 @@ let cmd_show_version n = op_show_version := Some n
 
 let op_reinstall = ref None
 let cmd_reinstall () = op_reinstall := Some ()
+
+let op_remove_unneeded = ref None
+let cmd_remove_unneeded () = op_remove_unneeded := Some ()
 
 let cmd_specs = [
     ("--version", Unit cmd_print_version, "Print the program's version");
@@ -397,6 +375,9 @@ let cmd_specs = [
         "or `---' if it is not installed");
     ("--remove", Unit cmd_remove, "Remove the specified packages and their " ^
         "config files if they were not modified");
+    ("--remove-unneeded", Unit cmd_remove_unneeded, "Remove all packages that were " ^
+        "marked as automatically installed and are not required by other packages " ^
+        "that are marked as manually installed");
     ("--list-installed", Unit cmd_list_installed, "List all installed packages");
     ("--show-problems", Unit cmd_show_problems, "Show all problems with the current " ^
         "installation (i.e. halfly installed packages after an interruption or " ^
@@ -408,8 +389,8 @@ let cmd_specs = [
     "graph in the dot format; If packages are specified, they are added to " ^
     "the graph.");
     ("--reverse-dependencies", String cmd_reverse_dependencies, "List the " ^
-        "installed packages that depend on the specified package if it is " ^
-        "installed");
+        "List the packages that depend on the specified package directly or " ^
+        "indirectly");
     ("--mark-manual", Unit cmd_mark_manual, "Mark the specified packages as " ^
         "manually installed");
     ("--mark-auto", Unit cmd_mark_auto, "Mark the specified packages as " ^
@@ -447,11 +428,12 @@ let check_cmdline () =
         PolyUnitOption !show_problems;
         PolyUnitOption !recover;
         PolyUnitOption !installation_graph;
-        PolyStringOption !reverse_dependencies;
+        PolyStringOption !op_reverse_dependencies;
         PolyUnitOption !op_mark_manual;
         PolyUnitOption !op_mark_auto;
         PolyStringOption !op_show_version;
         PolyUnitOption !op_reinstall;
+        PolyUnitOption !op_remove_unneeded;
     ]
     in
     match
@@ -502,11 +484,13 @@ let main () =
             then (print_endline "--reinstall requires an argument"; exit 2)
             else if install_packages_ui !anon_args true then exit 0 else exit 1
     | None -> match !policy with
-        | Some n -> (* if show_policy n then exit 0 else *) exit 1
+        | Some n -> if show_policy n then exit 0 else exit 1
     | None -> match !remove with
         Some () -> if !anon_args = []
             then (print_endline "--remove requires an argument"; exit 2)
             else if remove_packages_ui !anon_args then exit 0 else exit 1
+    | None -> match !op_remove_unneeded with
+        | Some () -> if remove_unneeded_packages_ui () then exit 0 else exit 1
     | None -> match !list_installed with
         | Some () -> if list_installed_packages () then exit 0 else exit 1
     | None -> match !show_problems with
@@ -515,8 +499,8 @@ let main () =
         | Some () -> (* if recover_from_dirty_state () then exit 0 else *) exit 1
     | None -> match !installation_graph with
         | Some () -> if print_igraph !anon_args then exit 0 else exit 1
-    | None -> match !reverse_dependencies with
-        | Some n -> (* (try print_reverse_dependencies n; exit 0 with _ -> *) exit 1
+    | None -> match !op_reverse_dependencies with
+        | Some n -> if print_reverse_dependencies n then exit 0 else exit 1
     | None -> match !op_mark_manual with
         | Some () -> if !anon_args = []
             then (print_endline "--mark-manual requires an argument"; exit 2)

@@ -7,9 +7,7 @@ open Repository
 open Installation
 open Installed_package
 
-(* type dependency_graph = (pkg, installation_reason * (repository * pkg) list) Hashtbl.t *)
-
-(* Worong_pkg (repository, sticky) *)
+(* Wrong_pkg (repository, sticky) *)
 type specific_igraph_node =
     Present_pkg of bool |
     Wrong_pkg of (repository * bool) |
@@ -24,6 +22,7 @@ type igraph_node =
 (* Name, node, dependencies, dependents (reverse dependencies) *)
 type igraph = (string, igraph_node * string list * string list) Hashtbl.t
 
+(* Name, constraints, reason, reinstall *)
 type ncrrl = (
     string *
     (package_constraint * string option) list *
@@ -483,6 +482,67 @@ let remove_from_igraph (status : status) (ig : igraph) (names : string list) =
         (Some status)
         names
 
+let unneeded_packages_from_igraph (ig : igraph) =
+    let visited_dict =
+        Hashtbl.create ~random:true 100
+    in
+    let rec process_node (names : string list) (name : string) =
+        match Hashtbl.find_opt visited_dict name with
+            | Some req -> Some (names, req)
+            | None ->
+                match Hashtbl.find_opt ig name with
+                    | None ->
+                        print_endline "Depres: Node disappeared from graph";
+                        None
+                    | Some ((reason, _, _, _), _, dets) ->
+                match reason with
+                    | Manual ->
+                        Hashtbl.add visited_dict name true;
+                        Some (names, true)
+                    | Auto ->
+                        Hashtbl.add visited_dict name false;
+                        let r =
+                            List.fold_left
+                                (fun nsr n ->
+                                    match nsr with
+                                        | None -> None
+                                        | Some (ns, r) ->
+                                    match process_node ns n with
+                                        | None -> None
+                                        | Some (ns, cr) ->
+                                    let r =
+                                        r || cr
+                                    in
+                                    Some (ns, r))
+                                (Some (names, false))
+                                dets
+                        in
+                        match r with
+                            | None -> None
+                            | Some (names, false) ->
+                                Some (name::names, false)
+                            | Some (names, true) ->
+                                Hashtbl.replace visited_dict name true;
+                                Some (names, true)
+    in
+    List.fold_left
+        (fun names name ->
+            match names with None -> None | Some names ->
+            match process_node names name with
+                | None -> None
+                | Some (ns, r) -> Some ns)
+        (Some [])
+        (hashtbl_keys ig)
+
+let version_repo_to_install_from_igraph (ig : igraph) (name : string) =
+    match Hashtbl.find_opt ig name with
+        | None -> None
+        | Some ((_, _, v, spec), _, _) ->
+            match spec with
+                | Present_pkg _ -> Some (v, None)
+                | Missing_pkg r
+                | Wrong_pkg (r, _) -> Some (v, Some r)
+
 let print_igraph names =
     print_target ();
     match read_configuration () with None -> false | Some cfg ->
@@ -572,74 +632,55 @@ let print_igraph names =
     print_endline "}";
     true
 
-(* let get_dependent_package_names tuple_predicate status name =
-    let dep_set =
-        Hashtbl.create 100
-    in
-    let registered_set =
-        List.map
-            (fun (p,ir,ps) ->
-                match static_of_dynamic_pkg p with
-                    | None -> print_endline "Depres: Invalid package";
-                        raise Gp_exception
-                    | Some spkg -> (spkg, p, ir, ps))
-            (select_all_status_tuples status)
-    in
-    let bridge change name =
-        List.fold_left
-            (fun change (spkg, pkg, ir, ps) ->
-                if
-                    List.exists (fun n -> compare_names n name = 0) spkg.srdeps
-                then
-                    if Hashtbl.mem dep_set spkg.sn
-                    then change
-                    else (Hashtbl.add dep_set spkg.sn (pkg, ir, ps); true)
-                else change)
-            change
-            registered_set
-    in
-    let change =
-        bridge false name
-    in
-    let rec transitive_bridge_step () =
-        let current_dep_set =
-            hashtbl_keys dep_set
-        in
-        let change =
-            List.fold_left
-                bridge
-                false
-                current_dep_set
-        in
-        if change
-        then transitive_bridge_step ()
-        else ()
-    in
-    if change
-    then transitive_bridge_step ()
-    else ();
-    Hashtbl.fold
-        (fun n t l -> if tuple_predicate t then n::l else l)
-        dep_set
-        []
-
-let print_reverse_dependencies name =
+let print_reverse_dependencies (name : string) =
     print_target ();
-    match read_status () with None -> raise Gp_exception | Some status ->
-    let installed_deps =
-        get_dependent_package_names
-            (fun (_,_,s) -> is_installed_of_state s)
-            status
-            name
+    match read_configuration () with
+        | None -> false
+        | Some cfg ->
+    match read_status () with
+        | None -> false
+        | Some status ->
+    match select_status_tuple_by_name status name with
+        | None ->
+            print_endline ("Package \"" ^ name ^ "\" is not installed");
+            false
+        | Some _ ->
+    match pkg_name_constraints_of_string name with
+        | None -> false
+        | Some (name, cs) ->
+    match build_igraph cfg status [] with
+        | None -> false
+        | Some ig ->
+    let visited_set =
+        Hashtbl.create ~random:true 100
     in
-    let installed_deps =
-        List.sort
-            compare_names
-            installed_deps
+    let rec process_node
+        (output : bool)
+        (names : string list)
+        (name : string) =
+
+        match Hashtbl.mem visited_set name with
+            | true -> Some names
+            | false ->
+                Hashtbl.add visited_set name ();
+                let names =
+                    if output then name::names else names
+                in
+                match Hashtbl.find_opt ig name with
+                    | None ->
+                        print_endline "Depres: Package not in graph";
+                        None
+                    | Some (_, _, dets) ->
+                List.fold_left
+                    (fun names name ->
+                        match names with None -> None | Some names ->
+                        process_node true names name)
+                    (Some names)
+                    dets
     in
-    print_endline
-        ("The following installed packages depend on a package with name \"" ^
-        name ^ "\"");
-    List.iter
-        print_endline
-        installed_deps *)
+    match process_node false [] name with
+        | None -> false
+        | Some names ->
+    List.sort compare_names names
+    |> List.iter print_endline;
+    true

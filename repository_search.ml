@@ -81,19 +81,6 @@ let find_package_in_all_repos (name : string) =
         []
         cfg.repos
 
-(* let find_package_version_in_all_repos
-    (name : string) (version : version) (arch : arch) =
-    let rsps = find_package_in_all_repos name arch
-    in
-    List.fold_left
-        (fun rsp (r, sp) ->
-            match rsp with Some rsp -> Some rsp | None ->
-            if sp.sv = version then Some (r, sp) else None
-        )
-        None
-        rsps *)
-
-
 let select_version_to_install
     (cs : package_constraint list)
     (arch : arch)
@@ -119,13 +106,18 @@ let find_and_select_package_in_all_repos
 
     find_package_in_all_repos name |> select_version_to_install cs arch
 
-(* let find_and_select_packages_in_all_repos (cfg:configuration) names =
-    List.fold_left
-            (fun a name -> match a with None -> None | Some a ->
-                match find_and_select_package_in_all_repos name with
-                    | None -> print_endline ("Package \"" ^ name ^
-                        "\" not found for architecture " ^ (string_of_arch cfg.a));
-                        None
-                    | Some rp -> Some (rp::a))
-            (Some [])
-            (List.rev names) *)
+(* This returns a list of all available versions of the package that satisfy
+ * the given constraints. The list is sorted descending by version *)
+let find_and_filter_package_in_all_repos
+    (name : string)
+    (cs : package_constraint list)
+    (arch : arch) =
+
+    let rps =
+        find_package_in_all_repos name
+    in
+    List.filter
+        (fun (r, sp) -> cs_satisfied sp.sv cs && sp.sa = arch)
+        rps
+    |> List.sort
+        (fun (_, sp1) (_, sp2) -> compare_version sp2.sv sp1.sv)

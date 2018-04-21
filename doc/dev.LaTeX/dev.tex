@@ -98,7 +98,7 @@
 		
 		\green{\texttt{-{}-remove <name1>, \dots}} & Remove the specified packages and their config files if they were not modified. If other packages depend on a package which is to be removed, these are removed first without asking the user for confirmation. \\
 		
-		\texttt{-{}-auto-remove} & Remove all packages that were marked as automatically installed but are not required by other packages that are marked as manually installed \\
+		\green{\texttt{-{}-remove-unneeded}} & Remove all packages that were marked as automatically installed and are not required by other packages that are marked as manually installed \\
 		
 		\green{\texttt{-{}-list-installed}} & List all installed packages \\
 		
@@ -112,7 +112,7 @@
 		
 		\green{\texttt{-{}-installation-graph <name1>, \dots}} & Print the dependency graph in the dot format; If packages are specified, they are added to the graph. \\
 		
-		\green{\texttt{-{}-reverse-dependencies <name>}} & List the installed packages that depend on the specified package \\
+		\green{\texttt{-{}-reverse-dependencies <name>}} & List the installed packages that depend on the specified package directly or indirectly. If the package is part of a cycle in the dependency graph, it is not printed even though it depends on one of its dependents and therefore on its own. \\
 		
 	\end{tabularx}
 	\egroup
@@ -162,9 +162,9 @@
 		
 		\texttt{-{}-guess-rdependencies} & Guess the package's runtime dependencies from destdir; This does not remove dependencies. However, this does not make sense without a solid package base that includes all used libraries. \\
 		
-		\green{\texttt{-{}-add-rdependency <name>}} & Add the runtime dependency <name> \\
+		\green{\texttt{-{}-add-dependency <name>}} & Add the runtime dependency <name> \\
 		
-		\green{\texttt{-{}-remove-rdependencies}} & Remove all runtime dependencies \\
+		\green{\texttt{-{}-remove-dependencies}} & Remove all runtime dependencies \\
 		
 		\green{\texttt{-{}-show-missing}} & List information that is missing in the package description \\
 		
