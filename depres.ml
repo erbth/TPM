@@ -75,6 +75,17 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
         in
         let rc = s_reason <> reason
         in
+        let reinstall =
+            match s_status with
+                | Changing
+                | Changing_unconf -> true
+                | Installing
+                | Installed
+                | Configuring
+                | Configured
+                | Removing_unconf
+                | Removing -> reinstall
+        in
         let (sp, node) =
             match
                 find_and_select_package_in_all_repos
@@ -197,7 +208,6 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
                 | None -> add_missing_package constraints
                 | Some (sp, sr, ss) ->
                     add_installed_package sp ss sr constraints reinstall)
-        (* | _ -> raise (Gp_exception "Not implemented yet") *)
 
 and add_nodes_to_igraph
     (cfg : configuration)
@@ -248,17 +258,6 @@ let build_igraph (cfg : configuration) (status : status) (ncrrl : ncrrl) =
         Some ig
     with
         Gp_exception msg -> print_endline ("Depres: " ^ msg); None
-
-(* let manual_pkgs_of_igraph (ig : igraph) =
-    Hashtbl.fold
-        (fun name (node, edges) mpkgs ->
-            match node with
-                | Present_pkg (Manual, _, _) -> name :: mpkgs
-                | Wrong_pkg (Manual, _, _) -> name :: mpkgs
-                | Missing_pkg (Manual, _, _) -> name :: mpkgs
-                | _ -> mpkgs)
-            ig
-            [] *)
 
 let install_from_igraph
     (cfg : configuration) (ig : igraph) (status : status option) =
@@ -442,7 +441,12 @@ let install_configure_from_igraph
         | Native_runtime -> configure_from_igraph cfg ig
         | Directory_runtime _ -> fun x -> x
 
-let remove_from_igraph (status : status) (ig : igraph) (names : string list) =
+let remove_from_igraph
+    (status : status)
+    (ig : igraph)
+    (names : string list)
+    (force : bool) =
+    
     let visited_set =
         Hashtbl.create ~random:true 100
     in
@@ -475,7 +479,7 @@ let remove_from_igraph (status : status) (ig : igraph) (names : string list) =
                     "\" is not installed hence not removing it.");
                 Some status
             | Some _ ->
-        elementary_remove_package name (Some status)
+        elementary_remove_package name force (Some status)
     in
     List.fold_left
         process_parent

@@ -3,7 +3,7 @@
 
 type runtime_system = Native_runtime | Directory_runtime of string
 
-let version = (1,0,3)
+let version = (1,0,4)
 let default_runtime_system = Native_runtime
 
 let desc_file_name = "desc.xml"

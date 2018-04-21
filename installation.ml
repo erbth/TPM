@@ -77,15 +77,26 @@ let remove_pkg_info_location
     (status : status option) =
 
     match status with None -> None | Some status ->
-            print_string_flush "    Removing the package info location";
-            if
-                rmdir_r (
-                    form_target_path
-                        (Tpm_config.package_info_location ^ "/" ^ spkg.sn))
-            then
-                (print_ok (); Some status)
-            else
-                (print_failed (); None)
+    print_string_flush "    Removing the package info location";
+    let path =
+        form_target_path (Tpm_config.package_info_location ^ "/" ^ spkg.sn)
+    in
+    if
+        match file_status path with
+            | Non_existent -> true
+            | Directory -> rmdir_r path
+            | Read_error ->
+                print_newline ();
+                print_string "    Read error";
+                false
+            | Other_file ->
+                print_newline ();
+                print_string ("    \"" ^ path ^ "\" is not a directory");
+                false
+    then
+        (print_ok (); Some status)
+    else
+        (print_failed (); None)
 
 let copy_packaging_scripts (spkg : static_pkg) (status : status option) =
     match status with None -> None | Some status ->
@@ -178,6 +189,7 @@ let determine_files_to_exclude (spkg : static_pkg) (status : status option) =
 let remove_fs_items
     ((files : string list), (cfiles : (string * string) list),
         (dirs : string list))
+    (force : bool)
     (status : status option) =
 
     let determine_files (status : status option) =
@@ -190,7 +202,8 @@ let remove_fs_items
                     match sha512sum_of_file_opt (form_target_path n) with
                         | None -> print_newline (); print_string_flush
                             ("    failed to calculate sha512sum of file \"" ^
-                            n ^ "\""); None
+                            n ^ "\"");
+                            if force then Some (n::fs) else None
                         | Some rs -> if rs = cks then Some (n::fs)
                             else
                             (print_newline ();
@@ -640,7 +653,7 @@ let elementary_change_package cfg name version reason repo status =
     |> remove_pkg_info_location spkg
     |> create_pkg_info_location spkg
     |> copy_packaging_scripts spkg
-    |> remove_fs_items fs_items_to_remove
+    |> remove_fs_items fs_items_to_remove false
     |> confirm_change spkg
 
 let elementary_configure_package (name : string) (status : status option) =
@@ -730,7 +743,11 @@ let elementary_configure_package (name : string) (status : status option) =
     |> execute_packaging_script_if_exists name Tpm_config.configuresh_name
     |> commit_change pkg reason        
 
-let elementary_remove_package (name : string) (status : status option) =
+let elementary_remove_package
+    (name : string)
+    (force : bool)
+    (status : status option) =
+
     match status with None -> None | Some status ->
     print_endline ("Removing package \"" ^ name ^ "\":");
     
@@ -843,6 +860,6 @@ let elementary_remove_package (name : string) (status : status option) =
     in
     remove_unconfigure_package name pstate (Some status)
     |> mark_removal spkg reason
-    |> remove_fs_items fs_items_to_remove
+    |> remove_fs_items fs_items_to_remove force
     |> remove_pkg_info_location spkg
     |> commit_removal spkg reason

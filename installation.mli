@@ -16,4 +16,4 @@ val elementary_configure_package :
     string -> status option -> status option
 
 val elementary_remove_package :
-    string -> status option -> status option
+    string -> bool -> status option -> status option

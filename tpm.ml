@@ -65,7 +65,7 @@ let remove_packages_ui names =
     match build_igraph cfg status [] with
         | None -> false
         | Some ig ->
-    remove_from_igraph status ig names
+    remove_from_igraph status ig names false
     |> bool_of_option
 
 let remove_unneeded_packages_ui () =
@@ -82,7 +82,7 @@ let remove_unneeded_packages_ui () =
     match unneeded_packages_from_igraph ig with
         | None -> false
         | Some names ->
-    remove_from_igraph status ig names
+    remove_from_igraph status ig names false
     |> bool_of_option
 
 let mark_manual_ui names =
@@ -101,99 +101,90 @@ let mark_auto_ui names =
         names
     |> bool_of_option
 
-(* let recover_from_dirty_state () =
+let recover_from_dirty_state () =
     print_target ();
-    match read_configuration () with None -> false | Some cfg ->
-    match read_status () with None -> false | Some status ->
-    let recover_critical_package_state_filter status (pkg, reason, pstate) =
-        match status with None -> None | Some status ->
-        match pstate with
-            | Installed
-            | Configured -> Some status
-            | _ -> match pkg.n with
-                | None -> print_endline "Package with no name, aborting";
-                        None
-                | Some name -> force_remove status name
-    in
-    let recover_critical_package_states_filter status =
-        match status with None -> None | Some status ->
-        List.fold_left
-            recover_critical_package_state_filter
-            (Some status)
-            (select_all_status_tuples status)
-    in
-    let remove_duplicate_packages_filter status =
-        let find_duplicate_packages_filter status =
-            match status with None -> (None, [], []) | Some status ->
-            ( Accumulator: (status, processed packages, duplicate packages) )
-            List.fold_left
-                (fun (status, pps, dps) (p,r,s) ->
-                    match status with None -> (None, [], []) | Some status ->
-                    match
-                        List.exists
-                            (fun pp -> compare_pkgs_by_name p pp = 0)
-                            pps
-                    with
-                        | true ->
-                            (match
-                                List.exists
-                                    (fun dp -> compare_pkgs_by_name p dp = 0)
-                                    dps
-                            with
-                                | true -> (Some status, pps, p::dps)
-                                | false -> (Some status, pps, p::p::dps))
-                        | false -> (Some status, p::pps, dps))
-                (Some status, [], [])
-                (select_all_status_tuples status)
-        in
-        let (status, _, dps) =
-            find_duplicate_packages_filter status
-        in
-        List.fold_left
-            (fun status dp ->
-                match status with None -> None | Some status ->
-                match dp.n with
-                    | None -> print_endline "Package with no name, aborting"; None
-                    | Some n -> force_remove status n)
-            status
-            dps
-    in
-    let compute_missing_packages_filter status =
-        match status with None -> (None, []) | Some status ->
-        ( Accumulator: (status, missing package names) )
-        List.fold_left
-            (fun (status, mps) (p,r,ps) ->
-                match status with None -> (None, []) | Some status ->
-                List.fold_left
-                    (fun (status, mps) n ->
-                        match status with None -> (None, []) | Some status ->
-                        if not (is_pkg_name_installed status n)
-                        then (Some status, n::mps)
-                        else (Some status, mps))
-                (Some status, mps)
-                p.rdeps)
-            (Some status, [])
-            (select_all_status_tuples status)
-    in
-    let install_missing_packages_filter (status, mpns) =
-        install_packages_filter true false mpns status
-    in
-    let check_installation_filter = function
-        None -> false | Some status ->
-        print_newline ();
-        print_endline "--- Checking the installation after the recovery ---";
-        match check_installation status true with
-            | No_problem -> print_endline "Recovery successful"; true
-            | _ -> print_endline "Recovery failed"; false
-    in
+    print_endline "Recovering:";
+    match read_configuration () with
+        | None -> false
+        | Some cfg ->
+    match read_status () with
+        | None -> false
+        | Some status ->
     
-    Some status
-    |> recover_critical_package_states_filter
-    |> remove_duplicate_packages_filter
-    |> compute_missing_packages_filter
-    |> install_missing_packages_filter
-    |> configure_all_packages_filter
-    |> check_installation_filter *)
+    let remove_packages (status : status option) =
+        match status with None -> None | Some status ->
+        print_endline "--- Removing packages that must be removed ---";
+        match
+            List.fold_left
+                (fun names (p, _, s) ->
+                    match names with None -> None | Some names ->
+                    match s with
+                        | Installed
+                        | Changing
+                        | Changing_unconf
+                        | Configuring
+                        | Configured -> Some names
+                        | Removing_unconf
+                        | Removing
+                        | Installing ->
+                            match p.n with
+                                | None ->
+                                    print_endline "Invalid package in status";
+                                    None
+                                | Some n ->
+                                    Some (n::names))
+                (Some [])
+                (select_all_status_tuples status)
+        with
+            | None -> None
+            | Some names ->
+        print_endline "The following packages will be removed:";
+        List.iter
+            (fun n -> print_endline ("    " ^ n))
+            (List.sort compare_names names);
+        match build_igraph cfg status [] with
+            | None -> None
+            | Some ig ->
+        let status =
+            remove_from_igraph status ig names true
+        in
+        print_newline ();
+        status
+    in
+
+    let install_and_configure_packages (status : status option) =
+        match status with None -> None | Some status ->
+        print_endline
+            "--- Installing and configuring packages if possible ---";
+        match build_igraph cfg status [] with
+            | None -> None
+            | Some ig ->
+        let status =
+            install_configure_from_igraph cfg status ig
+        in
+        print_newline ();
+        status
+    in
+
+    let check (status : status option) =
+        match status with None -> None | Some status ->
+        print_endline "--- Checking if problems still exist ---";
+        match check_installation status true with
+            | No_problem ->
+                print_endline "No problems found";
+                Some status
+            | Non_critical ->
+                print_endline "Just noncritical problems found";
+                Some status
+            | Critical ->
+                print_endline "Critical problems found";
+                None
+    in
+
+    remove_packages (Some status)
+    |> install_and_configure_packages
+    |> check
+    |> bool_of_option
 
 let show_policy name =
     print_target ();
@@ -496,7 +487,7 @@ let main () =
     | None -> match !show_problems with
         | Some () -> if show_problems_with_installation () then exit 0 else exit 1
     | None -> match !recover with
-        | Some () -> (* if recover_from_dirty_state () then exit 0 else *) exit 1
+        | Some () -> if recover_from_dirty_state () then exit 0 else exit 1
     | None -> match !installation_graph with
         | Some () -> if print_igraph !anon_args then exit 0 else exit 1
     | None -> match !op_reverse_dependencies with
