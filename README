@@ -4,4 +4,4 @@ A package manager for the TSClient LEGACY ThinClient operating system.
 It is entirely written in OCaml and uses GNU Tar, GNU Gzip and sha512sum
 from GNU Coreutils, or similar programs with a compatible user interface.
 
-20 April, 2018, Thomas Erbesdobler <t.erbesdobler@gmx.de>
+21 April, 2018, Thomas Erbesdobler <t.erbesdobler@gmx.de>
