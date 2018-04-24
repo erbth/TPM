@@ -128,7 +128,7 @@ let rec add_node_to_igraph (cfg : configuration) (status : status)
                     "\" shall be removed however it is not in the graph"))
             | Some (node, deps, dets) ->
                 Hashtbl.remove ig name;
-                (* Remove constraints and reverse edges from dependencies *)
+                (* Remove constraints from dependencies *)
                 List.iter
                     (fun n ->
                         match Hashtbl.find_opt ig n with
