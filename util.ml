@@ -286,19 +286,32 @@ let print_ok () =
 
 let sha512sum_of_file_opt name =
     try
-        let cmd = !program_sha512sum ^ " '" ^ name ^ "'"
+        let args = [|!program_sha512sum; name |]
         in
-        let ic = Unix.open_process_in cmd
+        let (ic,oc) =
+            Unix.pipe ~cloexec:false ()
         in
-        let sha512sum = input_line ic
-        in
-        if Unix.close_process_in ic <> Unix.WEXITED 0
-        then
-            (print_endline (cmd ^ " failed."); None)
-        else
-            let sha512sum = String.split_on_char ' ' sha512sum |> List.hd
+        try
+            let pid =
+            Unix.create_process
+                args.(0)
+                args
+                Unix.stdin
+                oc
+                Unix.stderr
             in
-                Some sha512sum
+            let sha512sum =
+                input_line (Unix.in_channel_of_descr ic)
+            in
+            if Unix.waitpid [] pid <> (pid, Unix.WEXITED 0)
+            then
+                (print_endline (!program_sha512sum ^ " failed."); None)
+            else
+                let sha512sum = String.split_on_char ' ' sha512sum |> List.hd
+                in
+                    Unix.close ic; Unix.close oc; Some sha512sum
+        with e ->
+            Unix.close ic; Unix.close oc; raise e
     with
         | Unix.Unix_error (c,_,_) ->
             print_endline ("Calculating the sha512 sum of file \"" ^
