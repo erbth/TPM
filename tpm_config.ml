@@ -3,7 +3,7 @@
 
 type runtime_system = Native_runtime | Directory_runtime of string
 
-let version = (1,0,5)
+let version = (1,0,6)
 let default_runtime_system = Native_runtime
 
 let desc_file_name = "desc.xml"
@@ -28,3 +28,6 @@ let config_file_version = "1.0"
 
 let status_file_path = "/var/lib/tpm/status.xml"
 let status_file_version = "1.1"
+
+(* Configuration of the pkgdb program *)
+let default_pkgdb_file = "pkgdb.xml"

@@ -33,6 +33,12 @@ let string_of_opt_arch = function
     | None -> "???"
     | Some a -> string_of_arch a
 
+let compare_archs a1 a2 = match (a1, a2) with
+    | (I386, I386)
+    | (Amd64, Amd64) -> 0
+    | (Amd64, I386) -> 1
+    | (I386, Amd64) -> -1
+
 type version = (int * int * int)
 let version_of_string s =
     let ss = String.split_on_char '.' s
@@ -474,3 +480,31 @@ let rec rassoc_opt b = function
     | [] -> None
     | (la, lb)::ls ->
         if lb = b then Some la else rassoc_opt b ls
+
+(* Traverses the files in a directory tree in DFS manner *)
+let fold_directory_tree f acc name =
+    let rec work f acc name = match acc with
+        | None -> None
+        | Some acc -> match file_status name with
+            | Other_file ->
+                Some (f acc name)
+            | Directory ->
+                Sys.readdir name
+                |> Array.to_list
+                |> List.map (fun n -> name ^ "/" ^ n)
+                |> List.fold_left
+                    (work f)
+                    (Some acc)
+            | Non_existent
+            | Read_error -> failwith ("Could not read " ^ name)
+    in
+    try
+        work f (Some acc) name
+    with
+        | Sys_error msg ->
+            print_endline ("fold_directory_tree: " ^ msg);
+            None
+        | Failure msg ->
+            print_endline ("fold_directory_tree: " ^ msg);
+            None
+        | _ -> None

@@ -73,8 +73,8 @@
 	
 	To types of package exist: 'sw' (abbreviation of 'software', regular packages which contain executables, libraries etc.) and 'conf' (bundle system config files, i.e. those located in \file{/etc}). Packages of type conf differ in how config files are handled. If installed newly, an error will be signalled and no action be performed if any config file is already present. During an upgrade the same thing happens, however if the file was installed by a former version of the package and not modified since then, \program{tpm} replaces it.
 	
-	\section{User interface}
-	\label{sec:user_interface}
+	\section{The program \program{tpm}}
+	\label{sec:the_program_tpm}
 	
 	TPM features only one tool, which contains the entire functionality: \program{tpm}.
 	
@@ -199,13 +199,51 @@
 	\end{tabularx}
 	\egroup
 	
+	\section{The program \program{tpmdb}}
+	\label{sec:the_program_tpmdb}
+	
+	\program{tpmdb} can be used to generate a database that contains meta informations of packages. This database can be searched for files and to which package they belong.
+	
+	\subsection{Commands}
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\texttt{-{}-create-from-directory <directory>} & Recursively traverses the specified directory and adds each TPM package it encounters to the database. \\
+		
+		\texttt{-{}-find-files <file1>, ...} & Searched the database for packages that contain the given files and outputs their names, versions and architectures. The filenames are regular expressions as supported by the OCaml Str module.
+	\end{tabularx}
+	\egroup
+	
+	\subsection{General options}
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\texttt{-{}-db <file>} & Specifies the database file to use. The default is \file{pkgdb.xml} in the current working directory.
+	\end{tabularx}
+	\egroup
+	
+	\subsection{Options for queries}
+	
+	These options can be used to refine the results and the output of the query command \texttt{-{}-find-files}.
+	
+	\bgroup
+	\def\arraystretch{1.5}
+	\begin{tabularx}{\textwidth}{lX}
+		\texttt{-{}-db <file>} & Specifies the database file to use. The default is \file{pkgdb.xml} in the current working directory. \\
+		
+		\texttt{-{}-arch <arch>} & Filter the results by architecture \\
+		
+		\texttt{-{}-print-only-names} & Do only print the package's names and no version or architecture \\
+	\end{tabularx}
+	\egroup
+	
 	\section{File formats}
 	\label{sec:file_formats}
 	
 	\subsection{\file{desc.xml}}
 	\label{sec:desc.xml}
 	
-	\dirtree{.1 <sw file\_version=''1.0''> | <conf file\_version=''1.0''>.
+	\dirtree{.1 <sw file\_version=''1.1''> | <conf file\_version=''1.1''>.
 		.2 <name>.
 		.2 <version> \DTcomment{\{x.y.z\} with integer values x, y, z}.
 		.2 <arch> \DTcomment{\{i386 | amd64\}}.
@@ -224,11 +262,21 @@
 	This file is located in the \file{/var/lib/tpm} directory.
 	
 	\noindent
-	\dirtree{.1 <status file\_version=''1.0''>.
+	\dirtree{.1 <status file\_version=''1.1''>.
 		.2 <tuple> .
-		.3 <sw \dots> | <config \dots> \DTcomment{package element equal to one in \file{desc.xml}; The file\_version attribute must match the file\_version of status.}.
+		.3 <sw \dots> | <conf \dots> \DTcomment{package element equal to one in \file{desc.xml}; The file\_version attribute must match the file\_version of status.}.
 		.3 <reason> \DTcomment{\{auto | manua \}}.
 		.3 <status> \DTcomment{\{installation | installed | removal | removed\}}.
+	}
+
+	\subsection{\file{pkgdb.xml}}
+	\label{sec:pkgdb.xml}
+	
+	This file can be generated with \program{tpmdb}. It may have a different filename.
+	
+	\noindent
+	\dirtree{.1 <pkgdb file\_version=''1.1''>.
+		.2 <sw \dots> | <conf \dots> \DTcomment{package element equal to one in \file{desc.xml}; The file\_version attribute must match the file\_version of pkgdb.}.
 	}
 
 	\subsection{\file{config.xml}}

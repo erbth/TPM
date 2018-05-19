@@ -3,15 +3,22 @@ PKGS := unix str xml-light
 PREFIX ?= /usr/local
 DESTDIR ?= /
 
-TPM_VERSION := 1.0.5
+TPM_VERSION := 1.0.6
+
+.PHONY: all
+all: tpm.native tpmdb.native
 
 tpm.native: FORCE
 	ocamlbuild $(PKGS:%=-pkg %) tpm.native
 
+tpmdb.native: FORCE
+	ocamlbuild $(PKGS:%=-pkg %) tpmdb.native
+
 .PHONY: install uninstall
-install: tpm.native README
+install: tpm.native tpmdb.native README
 	install -dm755 $(DESTDIR)/$(PREFIX)/bin
-	install -m755 $< $(DESTDIR)/$(PREFIX)/bin/tpm
+	install -m755 tpm.native $(DESTDIR)/$(PREFIX)/bin/tpm
+	install -m755 tpmdb.native $(DESTDIR)/$(PREFIX)/bin/tpmdb
 	install -dm755 $(DESTDIR)/$(PREFIX)/share/doc/tpm
 	install -m644 README $(DESTDIR)/$(PREFIX)/share/doc/tpm/
 
@@ -24,6 +31,6 @@ dist:
 
 .PHONY: clean
 clean:
-	rm -rf _build tpm.native
+	rm -rf _build tpm.native tpmdb.native
 
 FORCE:
