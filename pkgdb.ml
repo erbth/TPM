@@ -129,3 +129,33 @@ let select_name_version_arch spp fp (db : pkgdb) =
         db
         []
     |> List.map (fun sp -> (sp.sn, sp.sv, sp.sa))
+
+let select_name_version_arch_in_latest_version spp fp (db : pkgdb) =
+    let in_files sp =
+        let files = sp.sfiles
+        in
+        let files =
+            List.fold_left
+                (fun l (_, f) -> f::l)
+                files
+                sp.scfiles
+        in
+        List.exists
+            fp
+            files
+    in
+    Hashtbl.fold
+        (fun n sps o ->
+            match
+                list_max
+                    (fun sp1 sp2 -> compare_version sp1.sv sp2.sv)
+                    sps
+            with
+                | None -> o
+                | Some sp ->
+                    if spp sp
+                    then (if in_files sp then sp :: o else o)
+                    else o)
+        db
+        []
+    |> List.map (fun sp -> (sp.sn, sp.sv, sp.sa))

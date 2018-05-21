@@ -6,6 +6,7 @@ open Pkg
 (* Stuff that must be here due to linear parsing of OCaml files *)
 let print_only_names = ref false
 let arch_filter = ref None
+let only_in_latest_version = ref false
 
 (* Operations *)
 let create_from_directory (path : string) =
@@ -74,7 +75,11 @@ let find_files patterns =
         | Some a -> fun sp -> sp.sa = a
     in
     let nvas =
-        Pkgdb.select_name_version_arch
+        let selector = match !only_in_latest_version with
+            | false -> Pkgdb.select_name_version_arch
+            | true -> Pkgdb.select_name_version_arch_in_latest_version
+        in
+        selector
             spp
             (fun fn ->
                 List.exists
@@ -159,7 +164,9 @@ let cmd_specs = [
     ("--find-files", Unit cmd_find_files, "Find a file in the database and " ^
         "print the package it belongs to.");
     ("--arch", String cmd_arch_filter, "Filter the result by architecture");
-    ("--print-only-names", Set print_only_names, "Print only package names")
+    ("--print-only-names", Set print_only_names, "Print only package names");
+    ("--only-in-latest-version", Set only_in_latest_version, "Search only in " ^
+     "the latest version of each package")
 ]
 
 let anon_args = ref []

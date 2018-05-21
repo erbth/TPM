@@ -508,3 +508,15 @@ let fold_directory_tree f acc name =
             print_endline ("fold_directory_tree: " ^ msg);
             None
         | _ -> None
+
+let list_max cmp l =
+    let rec work max = function
+        | [] -> max
+        | e::l -> match max with
+            | None -> work (Some e) l
+            | Some max ->
+                if cmp e max > 0
+                then work (Some e) l
+                else work (Some max) l
+    in
+    work None l
