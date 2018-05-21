@@ -5,6 +5,8 @@ DESTDIR ?= /
 
 TPM_VERSION := 1.0.6
 
+.NOTPARALLEL:
+
 .PHONY: all
 all: tpm.native tpmdb.native
 
