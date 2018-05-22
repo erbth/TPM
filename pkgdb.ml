@@ -159,3 +159,22 @@ let select_name_version_arch_in_latest_version spp fp (db : pkgdb) =
         db
         []
     |> List.map (fun sp -> (sp.sn, sp.sv, sp.sa))
+
+let select_spkgs spp (db : pkgdb) =
+    Hashtbl.fold
+        (fun _ sps l ->
+            List.filter (fun sp -> if spp sp then true else false) sps @ l)
+        db
+        []
+
+let select_latest_versioned_spkgs spp (db : pkgdb) =
+    Hashtbl.fold
+        (fun _ sps l ->
+            match
+                list_max (fun sp1 sp2 -> compare_version sp1.sv sp2.sv) sps
+            with
+                | None -> l
+                | Some sp ->
+                    if spp sp then sp :: l else l)
+        db
+        []

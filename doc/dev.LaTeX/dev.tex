@@ -210,7 +210,9 @@
 	\begin{tabularx}{\textwidth}{lX}
 		\texttt{-{}-create-from-directory <directory>} & Recursively traverses the specified directory and adds each TPM package it encounters to the database. \\
 		
-		\texttt{-{}-find-files <file1>, ...} & Searched the database for packages that contain the given files and outputs their names, versions and architectures. The filenames are regular expressions as supported by the OCaml Str module.
+		\texttt{-{}-find-files <file1>, ...} & Searched the database for packages that contain the given files and outputs their names, versions and architectures. The filenames are regular expressions as supported by the OCaml Str module. \\
+		
+		\texttt{-{}-get-dependencies <name1>, ...} & Print the direct dependencies of the specified packages. The package names are regular expressions as supported by OCaml's Str module. \\
 	\end{tabularx}
 	\egroup
 	
@@ -224,18 +226,16 @@
 	
 	\subsection{Options for queries}
 	
-	These options can be used to refine the results and the output of the query command \texttt{-{}-find-files}.
+	These options can be used to refine the results and the output of the query commands \texttt{-{}-find-files} and \texttt{-{}-get-dependencies}.
 	
 	\bgroup
 	\def\arraystretch{1.5}
 	\begin{tabularx}{\textwidth}{lX}
-		\texttt{-{}-db <file>} & Specifies the database file to use. The default is \file{pkgdb.xml} in the current working directory. \\
-		
 		\texttt{-{}-arch <arch>} & Filter the results by architecture \\
 		
 		\texttt{-{}-only-in-latest-version} & Do only search in the latest version of a package \\
 		
-		\texttt{-{}-print-only-names} & Do only print the package's names and no version or architecture \\
+		\texttt{-{}-print-only-names} & Do only print the package's names and no version or architecture or other information \\
 	\end{tabularx}
 	\egroup
 	
