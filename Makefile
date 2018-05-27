@@ -3,7 +3,7 @@ PKGS := unix str xml-light
 PREFIX ?= /usr/local
 DESTDIR ?= /
 
-TPM_VERSION := 1.0.6
+TPM_VERSION := 1.0.7
 
 .NOTPARALLEL:
 

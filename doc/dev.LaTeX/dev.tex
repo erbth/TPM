@@ -213,6 +213,8 @@
 		\texttt{-{}-find-files <file1>, ...} & Searched the database for packages that contain the given files and outputs their names, versions and architectures. The filenames are regular expressions as supported by the OCaml Str module. \\
 		
 		\texttt{-{}-get-dependencies <name1>, ...} & Print the direct dependencies of the specified packages. The package names are regular expressions as supported by OCaml's Str module. \\
+		
+		\texttt{-{}-get-reverse-dependencies} & Same as -{}-get-dependencies but retrieves the immediate reverse dependencies of a package.
 	\end{tabularx}
 	\egroup
 	

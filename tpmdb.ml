@@ -162,6 +162,67 @@ let get_dependencies patterns =
     List.iter print_endline deps;
     true
 
+let get_reverse_dependencies patterns =
+    match Pkgdb.read !Tpmdb_common.db_file with
+        | None ->
+            print_endline "Tpmdb: Could not read database.";
+            false
+        | Some db ->
+
+    let res = List.map Str.regexp_string patterns
+    in
+
+    let selector = match !only_in_latest_version with
+        | true -> Pkgdb.select_latest_versioned_spkgs
+        | false -> Pkgdb.select_spkgs
+    in
+
+    let arch_predicate = match !arch_filter with
+        | None -> (fun _ -> true)
+        | Some a -> (fun sp -> sp.sa = a)
+    in
+
+    (* Select by name *)
+    let predicate =
+        fun sp -> arch_predicate sp &&
+            List.exists
+                (fun r -> Str.string_match r sp.sn 0)
+                res
+    in
+
+    let refpkgnames =
+        selector predicate db
+        |> List.map (fun sp -> sp.sn)
+    in
+
+    let rdep_predicate =
+        fun sp -> arch_predicate sp &&
+            List.map
+                (fun (dep,_) -> dep)
+                sp.sdeps
+            |> List.exists
+                (fun dep ->
+                    List.exists (fun ref -> ref = dep) refpkgnames)
+    in
+
+    let rdeps =
+        selector rdep_predicate db
+        |> List.sort_uniq (fun sp1 sp2 -> compare_names sp1.sn sp2.sn)
+    in
+
+    let print_fkt =
+        match !print_only_names with
+            | true -> fun sp -> print_endline sp.sn
+            | false -> fun sp ->
+                print_endline
+                    (sp.sn ^ "=" ^
+                    string_of_version sp.sv ^ "@" ^
+                    string_of_arch sp.sa)
+    in
+
+    List.iter print_fkt rdeps;
+    true
+
 (* User interface *)
 let version_msg =
     let (major,minor,revision) = Tpm_config.version
@@ -189,6 +250,9 @@ let cmd_find_files () = op_find_files := Some ()
 let op_get_dependencies = ref None
 let cmd_get_dependencies () = op_get_dependencies := Some ()
 
+let op_get_reverse_dependencies = ref None
+let cmd_get_reverse_dependencies () = op_get_reverse_dependencies := Some ()
+
 let cmd_arch_filter s =
     match arch_of_string s with
         | None ->
@@ -210,14 +274,17 @@ let cmd_specs = [
     ("--only-in-latest-version", Set only_in_latest_version, "Search only in " ^
      "the latest version of each package");
     ("--get-dependencies", Unit cmd_get_dependencies, "Print the specified " ^
-     "packages' direct dependencies")
+     "packages' direct dependencies");
+    ("--get-reverse-dependencies", Unit cmd_get_reverse_dependencies, "Same as " ^
+     "--get-dependencies but retrieves the immediate reverse dependencies of a package")
 ]
 
 let anon_args = ref []
 let cmd_anon a =
     if
         !op_find_files = Some () ||
-        !op_get_dependencies = Some ()
+        !op_get_dependencies = Some () ||
+        !op_get_reverse_dependencies = Some ()
     then anon_args := (a::(!anon_args |> List.rev)) |> List.rev
     else(print_endline ("Invalid option \"" ^ a ^ "\""); exit 2)
 
@@ -226,7 +293,8 @@ let check_cmdline () =
         PolyUnitOption !op_print_version;
         PolyStringOption !op_create_from_directory;
         PolyUnitOption !op_find_files;
-        PolyUnitOption !op_get_dependencies
+        PolyUnitOption !op_get_dependencies;
+        PolyUnitOption !op_get_reverse_dependencies
     ]
     in
     match
@@ -254,6 +322,8 @@ let main () =
         Some () -> if find_files !anon_args then exit 0 else exit 1
     | None -> match !op_get_dependencies with
         Some () -> if get_dependencies !anon_args then exit 0 else exit 1
+    | None -> match !op_get_reverse_dependencies with
+        Some () -> if get_reverse_dependencies !anon_args then exit 0 else exit 1
     | None ->
         print_endline "Something went wrong (you should not see this): no command specified (!?)"
 
